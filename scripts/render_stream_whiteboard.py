@@ -492,6 +492,70 @@ def _build_cfg(args) -> sr.Config:
     return sr.Config(**kw)
 
 
+def _validate_annotation(annotation: dict, img_w: int, img_h: int) -> tuple[list[str], list[str]]:
+    """
+    渲染前校验标注，返回 (错误, 警告)。
+
+    渲染器按 reveal.startMs 排序、直接下标读取区域坐标，缺字段会抛出难以定位的
+    KeyError；而 _scaled_rect 会把越界坐标钳到画布内，画布外的区域因此被静默
+    跳过、成片里少一块也不报错。这里把两类问题都在渲染开始前讲清楚。
+
+    错误 = 会让成片默默出错或直接崩溃，必须改；警告 = 能渲染但结果可能不是预期。
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    canvas = annotation.get("canvas")
+    cw = ch = None
+    if not isinstance(canvas, dict):
+        errors.append('缺少 canvas 字段，应为 {"width": <原图宽>, "height": <原图高>}')
+    else:
+        cw, ch = canvas.get("width"), canvas.get("height")
+        if not all(isinstance(v, (int, float)) and v > 0 for v in (cw, ch)):
+            errors.append(f"canvas.width / canvas.height 必须是正数，当前是 {cw!r} / {ch!r}")
+            cw = ch = None
+        elif (cw, ch) != (img_w, img_h):
+            if abs(cw / ch - img_w / img_h) > 0.01:
+                errors.append(
+                    f"canvas 是 {cw}x{ch}，原图是 {img_w}x{img_h}，长宽比对不上，"
+                    f"所有区域坐标都会整体错位；请把 canvas 改成原图的像素尺寸"
+                )
+                cw = ch = None
+            else:
+                warnings.append(f"canvas {cw}x{ch} 与原图 {img_w}x{img_h} 不等，按比例缩放处理")
+
+    for i, el in enumerate(annotation["elements"], start=1):
+        if not isinstance(el, dict):
+            errors.append(f"第 {i} 个元素不是对象")
+            continue
+        tag = f"第 {i} 个元素" + (f"（{el['id']}）" if "id" in el else "")
+
+        region = el.get("region")
+        if not isinstance(region, dict) or not all(
+            isinstance(region.get(k), (int, float)) for k in ("x", "y", "width", "height")
+        ):
+            errors.append(f"{tag} 的 region 不完整，需要 x / y / width / height 四个数字")
+        elif region["width"] <= 0 or region["height"] <= 0:
+            errors.append(f"{tag} 的 region 宽高必须为正，当前是 {region['width']}x{region['height']}")
+        elif cw is not None:
+            x0, y0 = region["x"], region["y"]
+            x1, y1 = x0 + region["width"], y0 + region["height"]
+            if x1 <= 0 or y1 <= 0 or x0 >= cw or y0 >= ch:
+                errors.append(f"{tag} 的 region 完全落在画布外，这个区域不会被画出来")
+            elif x0 < 0 or y0 < 0 or x1 > cw or y1 > ch:
+                warnings.append(f"{tag} 的 region 超出画布边界，超出的部分会被截掉")
+
+        reveal = el.get("reveal")
+        if not isinstance(reveal, dict) or not all(
+            isinstance(reveal.get(k), (int, float)) for k in ("startMs", "durationMs")
+        ):
+            errors.append(f"{tag} 的 reveal 不完整，需要 startMs 和 durationMs")
+        elif reveal["durationMs"] <= 0:
+            errors.append(f"{tag} 的 reveal.durationMs 必须为正，当前是 {reveal['durationMs']}")
+
+    return errors, warnings
+
+
 def main(argv=None) -> int:
     args = _parse_args(argv)
     cfg = _build_cfg(args)
@@ -511,6 +575,16 @@ def main(argv=None) -> int:
         return 1
     if not annotation.get("elements"):
         print("[err] 标注中没有 elements")
+        return 1
+
+    img_h, img_w = image_bgr.shape[:2]
+    errors, warnings = _validate_annotation(annotation, img_w, img_h)
+    for w in warnings:
+        print(f"[warn] {w}")
+    if errors:
+        print(f"[err] 标注有 {len(errors)} 处问题，渲染中止：")
+        for e in errors:
+            print(f"       - {e}")
         return 1
 
     total_ms = args.total_ms if args.total_ms is not None else annotation.get("sceneDurationMs")

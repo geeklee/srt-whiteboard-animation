@@ -60,6 +60,53 @@ def parse_srt(text: str) -> list[dict]:
     return cues
 
 
+def _scene_from_range(cues: list[dict], lo: int, hi: int, scene_index: int) -> dict:
+    """按 1 起的字幕序号闭区间 [lo, hi] 生成一幕。"""
+    picked = cues[lo - 1:hi]
+    start = picked[0]["startMs"]
+    end = picked[-1]["endMs"]
+    return {
+        "sceneIndex": scene_index,
+        "startMs": start,
+        "endMs": end,
+        "sceneDurationMs": max(0, end - start),
+        "cueRange": [lo, hi],
+        "text": " ".join(c["text"] for c in picked).strip(),
+    }
+
+
+def _fix_short_tail(scenes: list[dict], cues: list[dict], min_ms: float) -> list[dict]:
+    """
+    末幕短于 min_ms 时，先向上一幕借末尾字幕补足；借不动就整幕并入上一幕。
+
+    不处理的话，总时长不是每幕目标时长整数倍的字幕会在结尾留下一个几秒的碎幕。
+    每一幕都要单独出图、单独标注、单独渲染，碎幕等于凭空多花一份成本，
+    所以宁可让末幕略微超过 max_sec，也不留下短于 min_sec 的碎幕。
+    """
+    if len(scenes) < 2 or scenes[-1]["sceneDurationMs"] >= min_ms:
+        return scenes
+
+    lo_prev = scenes[-2]["cueRange"][0]
+    lo_last, hi_last = scenes[-1]["cueRange"]
+
+    def span(lo: int, hi: int) -> int:
+        return cues[hi - 1]["endMs"] - cues[lo - 1]["startMs"]
+
+    # 逐条把上一幕末尾的字幕挪给末幕；上一幕自己不能因此跌破 min_ms
+    while lo_last > lo_prev + 1 and span(lo_last, hi_last) < min_ms:
+        if span(lo_prev, lo_last - 2) < min_ms:
+            break
+        lo_last -= 1
+
+    if span(lo_last, hi_last) < min_ms:
+        return scenes[:-2] + [_scene_from_range(cues, lo_prev, hi_last, scenes[-2]["sceneIndex"])]
+
+    return scenes[:-2] + [
+        _scene_from_range(cues, lo_prev, lo_last - 1, scenes[-2]["sceneIndex"]),
+        _scene_from_range(cues, lo_last, hi_last, scenes[-1]["sceneIndex"]),
+    ]
+
+
 def group_scenes(cues: list[dict], target_sec: float, min_sec: float, max_sec: float) -> list[dict]:
     """
     按目标时长把连续字幕聚成场景：累积到 target 附近就断一幕，
@@ -72,16 +119,7 @@ def group_scenes(cues: list[dict], target_sec: float, min_sec: float, max_sec: f
     def flush() -> None:
         if not bucket:
             return
-        start = bucket[0]["startMs"]
-        end = bucket[-1]["endMs"]
-        scenes.append({
-            "sceneIndex": len(scenes) + 1,
-            "startMs": start,
-            "endMs": end,
-            "sceneDurationMs": max(0, end - start),
-            "cueRange": [bucket[0]["index"], bucket[-1]["index"]],
-            "text": " ".join(c["text"] for c in bucket).strip(),
-        })
+        scenes.append(_scene_from_range(cues, bucket[0]["index"], bucket[-1]["index"], len(scenes) + 1))
         bucket.clear()
 
     for cue in cues:
@@ -96,7 +134,7 @@ def group_scenes(cues: list[dict], target_sec: float, min_sec: float, max_sec: f
         if span >= target_ms and span >= min_ms:
             flush()
     flush()
-    return scenes
+    return _fix_short_tail(scenes, cues, min_ms)
 
 
 def main(argv=None) -> int:
