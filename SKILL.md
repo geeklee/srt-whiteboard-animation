@@ -29,7 +29,7 @@ description: 将 SRT 字幕做成暖米黄纸张底的白板手绘动画：读�
 - **颜色与材质：** 米色纸张背景 `#F5EBD7`、深灰色草图线条；仅可用红色、橙色、蓝色 作少量概念性点缀。不得使用其他强调色、高饱和度配色或复杂纹理。
 - **人物与对象：** 对象以简洁轮廓、少量线条和留白表达，强调关系/变化/核心概念，而非真实比例、材质与细节。
 - **绝对禁止：** 场景源图中的任何文字、词语、字母、数字、字体或标签；写实感、摄影细节、3D 效果、绘画质感；复杂场景、密集背景、繁复装饰和高饱和度画面。
-- **绘制手部例外：** 若用户明确说明笔杆上的文字是其标识并要求保留，可保留 `drawing-hand.png` 笔杆上的标识；它不属于场景源图文字，也不需要清除或重绘。未获得用户明确说明时，仍按无文字画面处理。
+- **绘制手部例外：** 默认手部素材 `assets/drawing-hand.png` 笔杆上带有作者标识文字，属于固定素材而非场景源图文字，无需清除或重绘。若用户想自定义笔杆文案，用渲染命令的 `--pen-text "文案"` 一键生成（基于 `assets/drawing-hand-clean.png` 空图重新写文案，不会叠加在默认图上）；若需精细控制字号/字体/颜色，用 `scripts/add_pen_text.py` 手动生成手部素材，再通过第 4 个位置参数 `hand` 传入。
 
 ## 确认关卡（强制）
 
@@ -130,10 +130,13 @@ assets/whiteboard/<项目名>/
 4. **预览台（无需服务器）**：直接用 Chrome / Edge 打开 `assets/preview.html`，点"打开文件夹"选目录 → 载入全部图片+同名标注 → 拖拽编辑 → "保存"写回原文件。写回需 File System Access API（Chrome/Edge）；其它浏览器改为下载后手动覆盖。渲染仍走命令行（下面第 5 步）。
 5. **渲染单幕成片**：
    ```bash
-   <ENV_PY> scripts/render_stream_whiteboard.py <图片> <标注> <输出mp4> assets/drawing-hand.png \
-       [--ink-path grid|skeleton] [--color-fill contour-wipe|brush] [--total-ms <毫秒>]
+   <ENV_PY> scripts/render_stream_whiteboard.py <图片> <标注> <输出mp4> \
+       [--pen-text "笔杆文案"] [--ink-path grid|skeleton] [--color-fill contour-wipe|brush] [--total-ms <毫秒>]
    ```
-   `--total-ms` 缺省时用标注里的 `sceneDurationMs`。末行输出 `OUTPUT=<路径>`。
+   - 不传 `hand` 位置参数时，默认用 `assets/drawing-hand.png`（带作者标识）。
+   - `--pen-text` 生成带自定义文案的手部素材（基于 `assets/drawing-hand-clean.png` 空图，字号/颜色用默认值）；它与显式传入的 `hand` 互斥。
+   - 需精细控制字号/字体/颜色时，用 `scripts/add_pen_text.py` 手动生成手部素材，再作为第 4 个位置参数 `hand` 传入。
+   - `--total-ms` 缺省时用标注里的 `sceneDurationMs`。末行输出 `OUTPUT=<路径>`。
 6. **多幕合并**：
    ```bash
    <ENV_PY> scripts/merge_scenes.py --inputs 幕1.mp4 幕2.mp4 幕3.mp4 --output final.mp4
