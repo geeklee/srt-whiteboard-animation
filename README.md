@@ -114,11 +114,11 @@ python scripts/render_annotation_preview.py <图片路径> <标注路径> <预�
 
 打开 `assets/preview.html`，使用“打开文件夹”载入场景目录，即可编辑区域、顺序、时间与字幕关联。
 
-渲染单幕：
+渲染单幕（不传 `hand` 时默认用 `assets/drawing-hand.png`，可用 `--pen-text` 自定义笔杆文案）：
 
 ```bash
-<ENV_PY> scripts/render_stream_whiteboard.py <图片路径> <标注路径> <输出.mp4> assets/drawing-hand.png \
-  --ink-path grid --color-fill contour-wipe
+<ENV_PY> scripts/render_stream_whiteboard.py <图片路径> <标注路径> <输出.mp4> \
+  [--pen-text "笔杆文案"] [--ink-path grid] [--color-fill contour-wipe]
 ```
 
 合并多幕：
@@ -126,6 +126,47 @@ python scripts/render_annotation_preview.py <图片路径> <标注路径> <预�
 ```bash
 <ENV_PY> scripts/merge_scenes.py --inputs 幕1.mp4 幕2.mp4 幕3.mp4 --output final.mp4
 ```
+
+## 笔杆文案（可选）
+
+默认手部素材 `assets/drawing-hand.png` 笔杆上带有作者标识。如需自定义笔杆文案，有两种方式：
+
+**方式一：渲染时一键生成（用默认字号/颜色）**
+
+```bash
+<ENV_PY> scripts/render_stream_whiteboard.py <图片> <标注> <输出.mp4> --pen-text "江哥是老登啊"
+```
+
+**方式二：手动精细控制**
+
+```bash
+<ENV_PY> scripts/add_pen_text.py <空图> <文字> <输出路径> [选项]
+```
+
+选项（默认值）：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--size` | `73` | 字号(px)，与原图「江哥是老登啊」实测一致 |
+| `--font` | 项目自带字体 | 字体文件路径 |
+| `--font-index` | `0` | ttc 字体集合内的子字体序号 |
+| `--spacing` | `1.0` | 中文字间步进(em) |
+| `--color` | `#070706` | 文字颜色，取自原图实测值 |
+| `--angle` | 自动识别 | 强制指定倾斜角度(度) |
+
+```bash
+<ENV_PY> scripts/add_pen_text.py assets/drawing-hand-clean.png "Hello World" /tmp/hand-en.png --size 45
+```
+
+生成后再作为第 4 个位置参数传入渲染命令：
+
+```bash
+<ENV_PY> scripts/render_stream_whiteboard.py <图片> <标注> <输出.mp4> /tmp/hand-en.png
+```
+
+空图底图 `assets/drawing-hand-clean.png` 是笔杆无文字的 clean 图，每次生成都基于它，不会叠加在默认图上。
+
+> 字体：项目自带霞鹜文楷轻便版（LXGW WenKai Lite，SIL OFL 1.1），已子集化裁剪到 GB2312 常用字（6763 汉字 + 常用标点 + ASCII），体积约 3.6MB。位于 `assets/fonts/`，随附 `OFL.txt` 许可全文。生僻字、繁体或 emoji 不在子集内，渲染时会缺失；如需完整覆盖可自行下载完整版替换 `assets/fonts/LXGWWenKaiLite-Regular.ttf`。
 
 ## 质量检查
 
@@ -142,13 +183,16 @@ python scripts/render_annotation_preview.py <图片路径> <标注路径> <预�
 srt-whiteboard-animation/
 ├── SKILL.md                         # 完整工作流与约束
 ├── assets/
-│   ├── drawing-hand.png              # 手部素材
+│   ├── drawing-hand.png              # 手部素材（默认，笔杆带作者标识）
+│   ├── drawing-hand-clean.png        # 空图底图（笔杆无文字，供 --pen-text / add_pen_text.py）
+│   ├── fonts/                        # 开源字体（霞鹜文楷轻便版，附 OFL.txt）
 │   ├── preview.html                  # 本地编辑预览台
 ├── examples/                         # README 案例素材
 ├── scripts/
 │   ├── parse_srt.py                  # 字幕解析与分镜建议
 │   ├── render_annotation_preview.py  # 标注检查图
 │   ├── render_stream_whiteboard.py   # 流式笔迹 MP4 渲染器
+│   ├── add_pen_text.py               # 笔杆文案生成器
 │   ├── merge_scenes.py               # 多幕合并
 │   └── prepare_env.py                # 依赖环境准备
 └── agents/openai.yaml                # Codex 元数据
@@ -161,6 +205,8 @@ srt-whiteboard-animation/
 ## 许可证
 
 本项目基于 MIT License 开源，详见 [LICENSE](LICENSE)。
+
+项目内字体「霞鹜文楷轻便版」（`assets/fonts/`，子集化裁剪到 GB2312 常用字）基于 [SIL Open Font License 1.1](https://scripts.sil.org/OFL) 授权，随附 `OFL.txt` 许可全文，其许可与本项目 MIT License 相互独立。
 
 ## 关于作者
 

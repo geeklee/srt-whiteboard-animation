@@ -459,7 +459,9 @@ def _parse_args(argv=None):
     p.add_argument("image", help="线稿图路径")
     p.add_argument("annotation", help="同名 annotation.json 路径")
     p.add_argument("output", help="输出 MP4 路径")
-    p.add_argument("hand", nargs="?", default=str(DEFAULT_HAND), help="手部素材 PNG（默认内置）")
+    p.add_argument("hand", nargs="?", default=None, help="手部素材 PNG（默认内置 drawing-hand.png）")
+    p.add_argument("--pen-text", default=None,
+                   help="在笔杆上写文案（基于 clean 图生成，覆盖默认手部素材）")
     p.add_argument("--total-ms", type=int, default=None, help="总时长；缺省用标注 sceneDurationMs")
     p.add_argument("--bare-tip", action="store_true", help="不叠加笔尖/手部")
     p.add_argument("--ink-path", default="grid", choices=["grid", "skeleton"],
@@ -522,20 +524,43 @@ def main(argv=None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = out_path.with_name(out_path.stem + "_raw.mp4")
 
-    hand_png = Path(args.hand) if args.hand else None
-    renderer = RegionStreamRenderer(image_bgr, annotation, cfg, hand_png, args.bare_tip)
-    print(f"  输入: {args.image}")
-    print(f"  输出尺寸: {renderer.out_w}x{renderer.out_h}, 帧率: {cfg.fps}")
-    print(f"  区域数: {len(annotation['elements'])}, 总时长: {total_ms}ms, "
-          f"笔迹: {cfg.ink_path_mode}, 上色: {cfg.color_fill}")
+    hand_png: Path | None = Path(args.hand) if args.hand else DEFAULT_HAND
+    tmp_hand: Path | None = None
 
-    renderer.render_to(raw_path, total_ms)
-    final = sr.transcode_h264(raw_path, out_path)
+    if args.pen_text:
+        if args.hand:
+            print("[err] --pen-text 与自定义 hand 互斥，二选一")
+            return 1
+        from add_pen_text import render_pen_text, DEFAULT_HAND_CLEAN
+        import tempfile
+        try:
+            img, _ = render_pen_text(DEFAULT_HAND_CLEAN, args.pen_text)
+        except Exception as e:
+            print(f"[err] 生成笔杆文案失败: {e}")
+            return 1
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_hand = Path(tmp.name)
+        tmp.close()
+        img.save(tmp_hand)
+        hand_png = tmp_hand
 
-    size_mb = final.stat().st_size / (1024 * 1024)
-    print(f"\n最终视频: {final}  ({size_mb:.2f} MB)")
-    print("=" * 56)
-    print(f"OUTPUT={final}")
+    try:
+        renderer = RegionStreamRenderer(image_bgr, annotation, cfg, hand_png, args.bare_tip)
+        print(f"  输入: {args.image}")
+        print(f"  输出尺寸: {renderer.out_w}x{renderer.out_h}, 帧率: {cfg.fps}")
+        print(f"  区域数: {len(annotation['elements'])}, 总时长: {total_ms}ms, "
+              f"笔迹: {cfg.ink_path_mode}, 上色: {cfg.color_fill}")
+
+        renderer.render_to(raw_path, total_ms)
+        final = sr.transcode_h264(raw_path, out_path)
+
+        size_mb = final.stat().st_size / (1024 * 1024)
+        print(f"\n最终视频: {final}  ({size_mb:.2f} MB)")
+        print("=" * 56)
+        print(f"OUTPUT={final}")
+    finally:
+        if tmp_hand is not None:
+            tmp_hand.unlink(missing_ok=True)
     return 0
 
 
