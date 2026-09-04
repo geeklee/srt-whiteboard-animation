@@ -1,0 +1,11 @@
+# 渲染链依赖。prepare_env.py 会把它们装进 skill 目录下的 .venv。
+# 版本上界按大版本封顶：cv2 / PyAV 的 API 在大版本间有过破坏性变更。
+# 已验证组合：numpy 2.5.2 + opencv 5.0.0 + Pillow 12.3.0（Python 3.13）。
+numpy>=1.24,<3
+opencv-python>=4.8,<6        # 渲染与图像处理；无显示环境可换 opencv-python-headless
+av>=10,<16                   # PyAV：纯 pip 的 H.264 编码，无系统 ffmpeg 时的备选
+Pillow>=9.5,<14              # render_annotation_preview.py 画区域编号预览图
+edge-tts>=7,<8               # mux_srt_narration.py 合成中文旁白（免费、无需 key，需联网）
+
+# 开发/测试（可选）：
+#   pip install pytest

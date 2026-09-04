@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.pytest_cache/
 
 # 本地产物（成片体积大，不入库；banana 示例视频保留）
 *.mp4

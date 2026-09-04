@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,51 @@ import numpy as np
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ASSETS_DIR = _SCRIPT_DIR.parent / "assets"
 DEFAULT_HAND_PNG = _ASSETS_DIR / "drawing-hand.png"
+
+# 重画版手部素材：存在就自动接管默认资产（原文件保持不动，不覆盖、不删除）。
+HAND_V2_NAME = "drawing-hand-v2.png"
+HAND_V2_CANDIDATES = (
+    _ASSETS_DIR / HAND_V2_NAME,
+    Path("/workspace/e2e-paper/assets") / HAND_V2_NAME,
+)
+ENV_HAND = "SRT_WB_HAND"
+
+
+def resolve_hand_asset(given: str | Path | None, quiet: bool = False) -> Path | None:
+    """
+    决定用哪张手部素材：
+
+      1. 环境变量 SRT_WB_HAND（显式覆盖，优先级最高）
+      2. 调用方传入的路径——只要它不是仓库默认的 drawing-hand.png，就原样使用
+      3. 重画版 drawing-hand-v2.png（仓库 assets/ 或 /workspace/e2e-paper/assets/）
+      4. 仓库默认 assets/drawing-hand.png
+
+    也就是说：v2 一旦出现就自动替代默认资产，但**不会**覆盖或改写 drawing-hand.png；
+    想继续用旧资产就显式把它作为参数传进来以外的方式——用 SRT_WB_HAND 指定即可。
+    """
+    override = os.environ.get(ENV_HAND)
+    if override:
+        path = Path(override)
+        if not path.exists():
+            raise FileNotFoundError(f"环境变量 {ENV_HAND} 指向的手部素材不存在: {path}")
+        return path
+
+    given_path = Path(given) if given else None
+    is_default = (
+        given_path is None
+        or given_path.name == DEFAULT_HAND_PNG.name
+        or given_path.resolve() == DEFAULT_HAND_PNG.resolve()
+        if given_path is not None else True
+    )
+    if given_path is not None and not is_default:
+        return given_path
+
+    for candidate in HAND_V2_CANDIDATES:
+        if candidate.exists():
+            if not quiet:
+                print(f"  手部素材: 使用重画版 {candidate}（原 {DEFAULT_HAND_PNG.name} 未改动）")
+            return candidate
+    return given_path if given_path is not None else DEFAULT_HAND_PNG
 
 
 def _imread_any(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
@@ -61,6 +107,11 @@ class Config:
     color_weight: int = 1          # 添彩段权重
     gaze_seconds: float = 3.0      # 凝视段基准秒数
     ink_threshold: int = 10        # 像素灰度低于此值视为“墨迹”
+    # 实心墨块补偿：adaptiveThreshold 会把大面积均匀黑块的内部判成背景（局部均值≈自身），
+    # 于是实心区域在起笔段只画出轮廓。>0 时把原图灰度低于该值的像素也算作墨迹，
+    # 落墨颜色取 min(阈值图, 灰度) —— 线条仍是纯黑，实心块用它自己的真实墨色。
+    # 默认 0（关闭）以保持既有画面不变；小黑等实心 IP 建议 90。
+    solid_ink_gray: int = 0
     ink_reveal_radius: int = 4     # 笔尖每段轨迹可揭示线稿的半径
     target_hand_height: int = 493  # 手部素材缩放后的目标高度（按 1080p 调校）
     # 笔尖在素材中的归一化坐标（0..1），决定落墨点对齐到素材的哪个像素。
@@ -90,6 +141,9 @@ class Config:
     # ── 笔迹路径模式 ──
     # ink_path_mode: "grid" 网格格中心插值(默认) | "skeleton" 骨架级像素追踪
     ink_path_mode: str = "grid"
+    # ── 手写文字区（标题 + 要点）──
+    # 文字由渲染器排版书写，不让出图模型写中文（必然错字）。None = 自动找楷体/手写体。
+    text_font: str | None = None
     skeleton_min_points: int = 8        # 骨架笔画最少点数（过滤碎片）
     skeleton_resample_spacing: float = 2.5  # 骨架重采样间距（像素）
 
@@ -133,6 +187,21 @@ def _active_mask(threshold_map: np.ndarray, edge: int, threshold: int) -> np.nda
     """哪些网格含墨迹：块内存在灰度低于阈值的像素即为真。"""
     blocks = _to_grid_blocks(threshold_map, edge)
     return np.any(blocks < threshold, axis=(2, 3))
+
+
+def build_ink_maps(
+    thresh_map: np.ndarray, gray: np.ndarray, cfg: Config
+) -> tuple[np.ndarray, int]:
+    """
+    返回 (ink_map, ink_cut)：ink_map 是落墨取色用的灰度图，ink_cut 是「算墨迹」的阈值。
+
+    cfg.solid_ink_gray == 0（默认）时原样返回阈值图与 ink_threshold，行为与旧版一致。
+    >0 时把实心黑块也纳入墨迹：ink_map = min(阈值图, 原图灰度)，线条处仍为 0（纯黑），
+    实心区域取自身灰度，从而既能被判定为墨迹、又能画出真实墨色。
+    """
+    if cfg.solid_ink_gray > 0:
+        return np.minimum(thresh_map, gray), max(cfg.ink_threshold, cfg.solid_ink_gray)
+    return thresh_map, cfg.ink_threshold
 
 
 # ──────────────────────────────────────────────────────────────
@@ -583,10 +652,59 @@ def flatten_streams(streams: list[list[tuple[int, int]]]) -> list[tuple[int, int
 # ──────────────────────────────────────────────────────────────
 # 笔尖 / 手部覆盖
 # ──────────────────────────────────────────────────────────────
+def _mask_from_flat_background(bgr: np.ndarray, tolerance: int = 42) -> np.ndarray:
+    """
+    没有 alpha 通道时，从四角推出纯色背景并抠图。
+
+    重画版手部素材是**黑底**（不是白底、也不是透明），若仍按"近白即背景"处理，
+    整块黑底会被当成前景、在画面上盖出一个大黑方块。这里改成：
+      1. 取四角样本，若彼此接近则认定它就是背景色
+      2. 与背景色差异超过 tolerance 的像素才算手/笔
+      3. 取最大连通域，去掉零散噪点；四角颜色不一致时退回"近白即背景"
+    """
+    height, width = bgr.shape[:2]
+    patch = max(4, min(height, width) // 60)
+    corners = np.stack([
+        bgr[:patch, :patch].reshape(-1, 3).mean(axis=0),
+        bgr[:patch, -patch:].reshape(-1, 3).mean(axis=0),
+        bgr[-patch:, :patch].reshape(-1, 3).mean(axis=0),
+        bgr[-patch:, -patch:].reshape(-1, 3).mean(axis=0),
+    ])
+    spread = float(np.abs(corners - corners.mean(axis=0)).max())
+    if spread > 26:                     # 四角颜色不统一：不像纯色底，退回旧逻辑
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
+        return mask
+
+    background = corners.mean(axis=0)
+    distance = np.abs(bgr.astype(np.int16) - background.astype(np.int16)).sum(axis=2)
+    mask = (distance > tolerance).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(
+        mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    )
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if count > 1:                       # 只保留最大的一块（手+笔），丢掉零散噪点
+        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        mask = np.where(labels == largest, 255, 0).astype(np.uint8)
+
+    # 填内部空洞：笔杆描边、指节褶皱这些近黑线条会被误判成背景，
+    # 留在手里就是"透出画布"的孔。只有与画面边缘连通的才是真背景。
+    inverse = (mask == 0).astype(np.uint8)
+    holes, hole_labels = cv2.connectedComponents(inverse, connectivity=4)
+    if holes > 1:
+        border = set(hole_labels[0, :]) | set(hole_labels[-1, :])
+        border |= set(hole_labels[:, 0]) | set(hole_labels[:, -1])
+        border.discard(0)
+        interior = np.isin(hole_labels, list(border), invert=True) & (inverse > 0)
+        mask[interior] = 255
+    return mask
+
+
 def _load_hand(path: Path, target_h: int) -> tuple[np.ndarray, np.ndarray] | None:
     """
     读入手部素材并按目标高度等比缩放。
-    优先用 alpha 通道做蒙版；无 alpha 时回退到“近白即背景”检测。
+    优先用 alpha 通道做蒙版；没有 alpha 时按四角取样推背景色
+    （白底、黑底、纯色底都能处理），再退回“近白即背景”。
     返回 (手部BGR, 归一化蒙版[0..1])，失败返回 None。
     """
     if not path.exists():
@@ -599,9 +717,8 @@ def _load_hand(path: Path, target_h: int) -> tuple[np.ndarray, np.ndarray] | Non
         hand = raw[:, :, :3]
         mask = raw[:, :, 3]
     else:
-        hand = raw
-        gray = cv2.cvtColor(hand, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
+        hand = raw if raw.ndim == 3 else cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+        mask = _mask_from_flat_background(hand)
 
     # 裁到有效区
     (x0, y0), (x1, y1) = _bounding_box(mask)
@@ -1023,10 +1140,11 @@ class StreamBoardRenderer:
         self.thresh_map = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
         )
-        self.active = _active_mask(self.thresh_map, cfg.grid_edge, cfg.ink_threshold)
-        self.grid_blocks = _to_grid_blocks(self.thresh_map, cfg.grid_edge)
-        self.ink_pixels = self.thresh_map < cfg.ink_threshold
-        self.ink_paint = np.repeat(self.thresh_map[:, :, None], 3, axis=2).astype(np.float32)
+        self.ink_map, self.ink_cut = build_ink_maps(self.thresh_map, gray, cfg)
+        self.active = _active_mask(self.ink_map, cfg.grid_edge, self.ink_cut)
+        self.grid_blocks = _to_grid_blocks(self.ink_map, cfg.grid_edge)
+        self.ink_pixels = self.ink_map < self.ink_cut
+        self.ink_paint = np.repeat(self.ink_map[:, :, None], 3, axis=2).astype(np.float32)
 
         # 把原图背景染成画布底色（仅影响 color_img，不碰 ink_pixels / ink_paint）。
         # 这样上色/凝视阶段的背景与起笔(线稿)阶段一致，避免背景色突兀跳变。
@@ -1184,7 +1302,7 @@ class StreamBoardRenderer:
         r, c = cell
         e = self.cfg.grid_edge
         block = self.grid_blocks[r, c]
-        ink_region = block < self.cfg.ink_threshold
+        ink_region = block < self.ink_cut
         # 阈值图是单通道，复制到三通道画布
         paint = np.repeat(block[:, :, None], 3, axis=2)
         target = self.drawn[r * e:r * e + e, c * e:c * e + e]
@@ -1722,6 +1840,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="起笔段停顿节奏: heavy 明显(默认); auto 按密度自动分档; off 关闭; light 少量",
     )
     p.add_argument(
+        "--hand-height", type=int, default=None,
+        help="手部素材高度 (像素，按输出长边 1080 调校，默认 493)",
+    )
+    p.add_argument(
+        "--solid-ink-gray", type=int, default=None,
+        help="实心墨块补偿：灰度低于该值的像素也算墨迹 (0=关闭，默认；实心 IP 建议 90)",
+    )
+    p.add_argument(
         "--ink-path", default="grid", choices=["grid", "skeleton"],
         help="起笔段笔迹路径: grid 网格格中心插值(默认); skeleton 骨架级像素追踪(更精准贴合线条)",
     )
@@ -1748,6 +1874,10 @@ def _build_cfg(args: argparse.Namespace) -> Config:
         kw["pause_mode"] = args.pause
     if args.ink_path is not None:
         kw["ink_path_mode"] = args.ink_path
+    if args.solid_ink_gray is not None:
+        kw["solid_ink_gray"] = args.solid_ink_gray
+    if args.hand_height is not None:
+        kw["target_hand_height"] = args.hand_height
     return Config(**kw)
 
 
@@ -1770,7 +1900,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_path = out_dir / f"stream_{ts}.mp4"
     h264_path = out_dir / f"stream_{ts}_h264.mp4"
 
-    pen_png = Path(args.pen_image) if args.pen_image else None
+    pen_png = resolve_hand_asset(args.pen_image)
     renderer = StreamBoardRenderer(image_bgr, cfg, pen_png, args.bare_tip)
     print(f"  输入: {args.image}")
     print(f"  输出尺寸: {renderer.out_w}x{renderer.out_h}, 帧率: {cfg.fps}")

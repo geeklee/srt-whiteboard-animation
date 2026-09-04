@@ -47,6 +47,9 @@
   .fields label { color: #b8bec8; }
   .fields input, .fields select { background: #262a33; color: #e6e8ec; border: 1px solid #3a3f4a; border-radius: 5px; padding: 5px 6px; width: 100%; font-size: 12.5px; }
   .fields input:disabled { opacity: .55; }
+  #textBox input, #textBox textarea { width: 100%; background: #262a33; color: #e6e8ec; border: 1px solid #3a3f4a; border-radius: 5px; padding: 6px 7px; font-size: 12.5px; margin-bottom: 6px; font-family: inherit; }
+  #textBox textarea { resize: vertical; }
+  .elist li .badge { color: #f0b429; font-size: 11px; }
   textarea#f_sub { width: 100%; background: #262a33; color: #e6e8ec; border: 1px solid #3a3f4a; border-radius: 5px; padding: 6px 7px; font-size: 12.5px; resize: vertical; font-family: inherit; }
   textarea#f_sub:disabled { opacity: .55; }
   .row-btns { display: flex; gap: 8px; margin: 10px 0; }
@@ -89,7 +92,8 @@
     <p class="tip muted">拖动列表项可调整绘制顺序</p>
     <ul id="elist" class="elist"></ul>
     <div class="row-btns">
-      <button id="addBtn">＋ 新增模块</button>
+      <button id="addBtn">＋ 绘制区</button>
+      <button id="addTextBtn">＋ 文字区</button>
       <button id="delBtn" disabled>删除选中</button>
     </div>
     <h3>选中模块</h3>
@@ -109,6 +113,12 @@
       <label>开始(ms)</label><input type="number" id="f_start" min="0" step="100" disabled>
       <label>结束(ms)</label><input type="number" id="f_end" min="0" step="100" disabled>
       <label>时长(ms)</label><input type="number" id="f_dur" disabled>
+    </div>
+    <h3 id="textHead" hidden>文字区（标题 + 要点）</h3>
+    <div id="textBox" hidden>
+      <input type="text" id="f_title" placeholder="本幕标题（建议 ≤14 字）">
+      <textarea id="f_bullets" rows="4" placeholder="每行一条要点（建议 2–4 条，每条 ≤18 字）"></textarea>
+      <p class="tip muted">标题与要点由渲染器手写出来，不要烤进出图</p>
     </div>
     <h3>字幕</h3>
     <textarea id="f_sub" rows="3" placeholder="该区域对应的字幕（保存进 annotation.json）" disabled></textarea>
@@ -131,19 +141,87 @@ const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
 
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 const mask = document.createElement('canvas'), maskCtx = mask.getContext('2d');
-const hand = new Image(); hand.src = './drawing-hand.png';
+
+// 手部素材：笔尖 = 去掉透明边后的左上角（与渲染器 tip_anchor=(0,0) 的约定一致）。
+// 高度比例取自渲染器 Config：target_hand_height 493px / cap_long_edge 1080px。
+const HAND_H_RATIO = 493 / 1080;
+const hand = new Image();
+let handBox = null;                       // {x, y, w, h}：素材里的有效像素范围
+hand.onload = () => { handBox = alphaBox(hand); render(); };
+hand.src = './drawing-hand.png';
+function alphaBox(img) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const cc = c.getContext('2d'); cc.drawImage(img, 0, 0);
+    const d = cc.getImageData(0, 0, c.width, c.height).data;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      if (d[(y * c.width + x) * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < x0 || y1 < y0) return { x: 0, y: 0, w: c.width, h: c.height };
+    return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  } catch (e) { return { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }; }
+}
 
 const S = { scenes: [], idx: -1, cfg: null, cfgHandle: null, dirHandle: null,
             source: null, paper: '#fdf0d0', time: 0, sel: 0, playing: false, last: 0,
             showOverlay: true, dirty: new Set(), drag: null, dragRow: -1 };
 
 const els = () => S.cfg ? S.cfg.elements : [];
-const endMs = e => e.reveal.startMs + e.reveal.durationMs;
-function totalMs() {
-  const arr = els();
-  const maxEnd = arr.length ? Math.max(...arr.map(endMs)) : 0;
-  return Math.max(S.cfg && S.cfg.sceneDurationMs || 0, maxEnd + 500, 1000);
+const isText = e => !!e && e.type === 'text';
+const textLines = e => {
+  const t = e.text || {};
+  if (typeof t === 'string') return { title: t, subtitle: '', bullets: [] };
+  return { title: t.title || '', subtitle: t.subtitle || '', bullets: Array.isArray(t.bullets) ? t.bullets : (t.bullets ? [t.bullets] : []) };
+};
+// 预览台里的文字区是"代理"：字形/抖动与成片不完全一致，位置与时序一致。
+function drawTextBlock(target, e, progress) {
+  const r = e.region, { title, subtitle, bullets } = textLines(e);
+  const lines = (title ? [{ text:title, kind:'title' }] : [])
+    .concat(subtitle ? [{ text:subtitle, kind:'subtitle' }] : [])
+    .concat(bullets.map(text => ({ text, kind:'bullet' })));
+  if (!lines.length) return;
+  const count = bullets.length + (title ? 1.45 : 0) + (subtitle ? 0.9 : 0) + (lines.length - 1) * 0.55;
+  let size = Math.max(11, Math.floor(r.height / Math.max(1, count)));
+  const longest = Math.max(title.length * 1.45, subtitle.length * 0.9, ...bullets.map(b => b.length), 1);
+  size = Math.min(size, Math.floor(r.width / (longest * 1.04)));
+  const titleSize = Math.floor(size * 1.45);
+  target.save();
+  target.beginPath(); target.rect(r.x, r.y, r.width * (progress === undefined ? 1 : progress), r.height); target.clip();
+  target.fillStyle = '#1d1d1d'; target.textBaseline = 'top';
+  let y = r.y;
+  lines.forEach(({ text: line, kind }) => {
+    const isTitle = kind === 'title', isSubtitle = kind === 'subtitle';
+    const fs = isTitle ? titleSize : (isSubtitle ? Math.max(11, Math.floor(size * 0.9)) : size);
+    target.font = `${isTitle ? '600 ' : ''}${fs}px "Kaiti SC","LXGW WenKai","STKaiti","Microsoft YaHei",serif`;
+    if (!isTitle && !isSubtitle) {
+      target.fillRect(r.x, y + fs * 0.55, Math.max(6, fs * 0.44), Math.max(2, fs / 12));
+      target.fillText(line, r.x + fs * 0.7, y);
+    } else if (isTitle) {
+      target.fillText(line, r.x, y);
+      target.fillRect(r.x, y + fs * 1.12, Math.min(r.width, target.measureText(line).width), Math.max(2, fs / 14));
+      y += fs * 0.2;
+    } else {
+      target.fillText(line, r.x, y);
+    }
+    y += fs * 1.55;
+  });
+  target.restore();
 }
+const endMs = e => ((e.reveal && e.reveal.startMs) || 0) + ((e.reveal && e.reveal.durationMs) || 0);
+const cfgEls = cfg => (cfg && Array.isArray(cfg.elements)) ? cfg.elements : [];
+// 场景总时长 = 最后一个区域结束 + 0.5s 凝视。缩短时序时也会跟着变短，
+// 播放时长与保存进 sceneDurationMs 的值始终是同一个数。
+function cfgTotalMs(cfg) {
+  const arr = cfgEls(cfg);
+  if (!arr.length) return Math.max((cfg && cfg.sceneDurationMs) || 0, 1000);
+  return Math.max(...arr.map(endMs)) + 500;
+}
+function totalMs() { return cfgTotalMs(S.cfg); }
 
 // ---------- 打开文件夹 ----------
 $('openBtn').addEventListener('click', openDir);
@@ -186,7 +264,7 @@ async function loadPairs(names, getFile, getHandle) {
   if (!scenes.length) { toast('目录里没有图片', true); return; }
   S.scenes = scenes; S.dirty.clear();
   const sel = $('sceneSel');
-  sel.innerHTML = scenes.map((s, i) => `<option value="${i}">${i+1}. ${s.name}${s.hasConfig ? '' : '（未标注）'}</option>`).join('');
+  sel.innerHTML = scenes.map((s, i) => `<option value="${i}">${i+1}. ${escapeHtml(s.name)}${s.hasConfig ? '' : '（未标注）'}</option>`).join('');
   sel.disabled = $('prevBtn').disabled = $('nextBtn').disabled = false;
   $('sceneCount').textContent = `共 ${scenes.length} 张（${scenes.filter(s=>s.hasConfig).length} 张带标注）`;
   $('hint').hidden = true; canvas.hidden = false; $('side').hidden = false;
@@ -254,6 +332,7 @@ function render() {
   const showFull = !arr.length || (!S.playing && S.time <= 0) || S.time >= done + 500;
   if (showFull) {
     ctx.drawImage(S.source, 0, 0, w, h);
+    arr.filter(isText).forEach(e => drawTextBlock(ctx, e));
   } else {
     let active = null;
     const ordered = arr.slice().sort((a, b) => a.reveal.startMs - b.reveal.startMs);
@@ -261,7 +340,9 @@ function render() {
     ordered.forEach((e, index) => {
       const p = getProgress(S.time, e); if (!p) return;
       const [x, y, x2, y2] = rect(e, p);
-      maskCtx.save(); maskCtx.beginPath(); maskCtx.rect(x, y, x2-x, y2-y); maskCtx.clip(); maskCtx.drawImage(S.source, 0, 0, w, h); maskCtx.restore();
+      maskCtx.save(); maskCtx.beginPath(); maskCtx.rect(x, y, x2-x, y2-y); maskCtx.clip();
+      if (isText(e)) { drawTextBlock(maskCtx, e, p); } else { maskCtx.drawImage(S.source, 0, 0, w, h); }
+      maskCtx.restore();
       maskCtx.save(); maskCtx.globalCompositeOperation = 'destination-out'; maskCtx.fillStyle = '#000';
       ordered.slice(index+1).forEach(later => { const r = later.region; maskCtx.fillRect(r.x, r.y, r.width, r.height); });
       (e.reveal.protectedRegions || []).forEach(pr => maskCtx.fillRect(pr.x, pr.y, pr.width, pr.height));
@@ -269,9 +350,13 @@ function render() {
       if (p > 0 && p < 1) active = [e, p];
     });
     ctx.drawImage(mask, 0, 0);
-    if (active && hand.complete && hand.naturalWidth) {
-      const [e, p] = active, [tx, ty] = tipPos(e, p), s = w / 1672 * 0.42;
-      ctx.drawImage(hand, tx - 115*s, ty - 77*s, hand.width*s, hand.height*s);
+    if (active && hand.complete && hand.naturalWidth && handBox) {
+      // 手部高度按画布长边等比缩放（不再假定画布宽 1672）；
+      // 只画素材的有效区，并让该区左上角（=笔尖）落在笔迹点上。
+      const [e, p] = active, [tx, ty] = tipPos(e, p);
+      const s = (HAND_H_RATIO * Math.max(w, h)) / handBox.h;
+      ctx.drawImage(hand, handBox.x, handBox.y, handBox.w, handBox.h,
+                    tx, ty, handBox.w * s, handBox.h * s);
     }
   }
   if (S.showOverlay && arr.length) drawOverlay();
@@ -308,7 +393,7 @@ function renderList() {
   const arr = els();
   $('elemCount').textContent = `共 ${arr.length} 个`;
   $('elist').innerHTML = arr.map((e, i) =>
-    `<li draggable="true" data-i="${i}" class="${i===S.sel?'sel':''}"><span class="grip">⋮⋮</span><span class="o">#${i+1}</span><span class="t">${(e.reveal.startMs/1000).toFixed(1)}s</span><span class="nm">${escapeHtml(e.label || '')}</span></li>`
+    `<li draggable="true" data-i="${i}" class="${i===S.sel?'sel':''}"><span class="grip">⋮⋮</span><span class="o">#${i+1}</span><span class="t">${(e.reveal.startMs/1000).toFixed(1)}s</span><span class="nm">${escapeHtml(e.label || '')}</span>${isText(e) ? '<span class="badge">文</span>' : ''}</li>`
   ).join('');
   $('elist').querySelectorAll('li').forEach(li => {
     const i = +li.dataset.i;
@@ -342,12 +427,19 @@ const F = ['f_label','f_x','f_y','f_w','f_h','f_dir','f_start','f_end','f_dur'];
 function syncEditor() {
   const e = els()[S.sel], on = !!e;
   F.forEach(id => $(id).disabled = !on); $('f_dur').disabled = true; $('f_sub').disabled = !on; $('delBtn').disabled = !on;
-  if (!on) { F.forEach(id => $(id).value = ''); $('f_sub').value = ''; return; }
+  if (!on) { F.forEach(id => $(id).value = ''); $('f_sub').value = ''; $('textHead').hidden = $('textBox').hidden = true; return; }
   $('f_label').value = e.label || '';
   ['x','y','width','height'].forEach((k, j) => $(['f_x','f_y','f_w','f_h'][j]).value = Math.round(e.region[k]));
   $('f_dir').value = e.reveal.direction;
   $('f_start').value = e.reveal.startMs; $('f_end').value = endMs(e); $('f_dur').value = e.reveal.durationMs;
   $('f_sub').value = e.subtitle || '';
+  const text = isText(e);
+  $('textHead').hidden = $('textBox').hidden = !text;
+  if (text) {
+    const { title, bullets } = textLines(e);
+    $('f_title').value = title;
+    $('f_bullets').value = bullets.join('\n');
+  }
 }
 function syncHandPath(e) {
   const r = e.region, d = e.reveal.direction; e.handPath = e.handPath || {};
@@ -373,6 +465,17 @@ function applyEditor() {
   markDirty(); renderList(); renderSubs(); setTime(Math.min(S.time, totalMs())); render();
 }
 F.forEach(id => { if (id !== 'f_dur') $(id).addEventListener('input', applyEditor); });
+function applyText() {
+  const e = els()[S.sel]; if (!isText(e)) return;
+  const bullets = $('f_bullets').value.split('\n').map(t => t.trim()).filter(Boolean);
+  if (typeof e.text !== 'object' || e.text === null) e.text = {};
+  e.text.title = $('f_title').value;
+  e.text.bullets = bullets;
+  markDirty(); render();
+}
+$('f_title').addEventListener('input', applyText);
+$('f_bullets').addEventListener('input', applyText);
+
 $('f_sub').addEventListener('input', () => { const e = els()[S.sel]; if (!e) return; e.subtitle = $('f_sub').value; markDirty(); renderSubs(); });
 
 // ---------- 增删 ----------
@@ -386,6 +489,20 @@ $('addBtn').addEventListener('click', () => {
     reveal: { direction: 'top_to_bottom', startMs: lastEnd + 200, durationMs: 2000, maskPaddingPx: 22, protectedRegions: [] },
     handPath: {} };
   syncHandPath(e); arr.push(e); S.sel = arr.length - 1; markDirty(); syncEditor(); renderList(); renderSubs(); render();
+});
+$('addTextBtn').addEventListener('click', () => {
+  if (!S.cfg) return;
+  const arr = els(), W = S.cfg.canvas.width, H = S.cfg.canvas.height;
+  const seq = arr.length + 1;
+  // 文字区默认放左上，时间放在最前面：先写标题要点，再画隐喻
+  const e = { id: `text_${seq}`, label: '标题与要点', sequence: seq, narrativeRole: '本幕主旨',
+    type: 'text', subtitle: '',
+    text: { title: '本幕标题', bullets: ['要点一', '要点二'] },
+    region: { x: Math.round(W*0.04), y: Math.round(H*0.04), width: Math.round(W*0.46), height: Math.round(H*0.22) },
+    reveal: { direction: 'left_to_right', startMs: 200, durationMs: 4000, maskPaddingPx: 22, protectedRegions: [] },
+    handPath: {} };
+  syncHandPath(e); arr.unshift(e); arr.forEach((x, i) => x.sequence = i + 1);
+  S.sel = 0; markDirty(); syncEditor(); renderList(); renderSubs(); render();
 });
 $('delBtn').addEventListener('click', () => {
   const arr = els(); if (S.sel < 0 || S.sel >= arr.length) return;
@@ -444,8 +561,9 @@ $('saveBtn').addEventListener('click', () => saveScene(S.idx));
 $('saveAllBtn').addEventListener('click', async () => { for (const i of [...S.dirty]) await saveScene(i); });
 async function saveScene(i) {
   const sc = S.scenes[i];
-  // 保存前把总时长对齐到当前编排（最后一个区域结束 + 0.5s 凝视），供渲染器使用
-  if (i === S.idx && sc.cfg.elements && sc.cfg.elements.length) sc.cfg.sceneDurationMs = totalMs();
+  // 每个待保存场景都对齐总时长（最后一个区域结束 + 0.5s 凝视），供渲染器使用。
+  // 注意不能只对当前场景生效，否则"全部保存"会把其它场景的旧时长写回去。
+  if (cfgEls(sc.cfg).length) sc.cfg.sceneDurationMs = cfgTotalMs(sc.cfg);
   const text = JSON.stringify(sc.cfg, null, 2);
   try {
     let handle = sc.cfgHandle;
