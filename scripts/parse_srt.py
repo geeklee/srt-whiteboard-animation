@@ -100,30 +100,30 @@ def group_scenes(cues: list[dict], target_sec: float, min_sec: float, max_sec: f
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="SRT 解析 + 分镜建议")
-    p.add_argument("srt", help="字幕文件路径 (.srt)")
-    p.add_argument("--target-sec", type=float, default=30.0, help="每幕目标口播秒数（默认 30）")
-    p.add_argument("--min-sec", type=float, default=25.0, help="每幕最短秒数（默认 25）")
-    p.add_argument("--max-sec", type=float, default=35.0, help="每幕最长秒数（默认 35）")
+    p = argparse.ArgumentParser(description="Phân tích SRT + đề xuất chia cảnh")
+    p.add_argument("srt", help="Đường dẫn tệp phụ đề (.srt)")
+    p.add_argument("--target-sec", type=float, default=30.0, help="Số giây đọc mục tiêu mỗi cảnh (mặc định 30)")
+    p.add_argument("--min-sec", type=float, default=25.0, help="Số giây tối thiểu mỗi cảnh (mặc định 25)")
+    p.add_argument("--max-sec", type=float, default=35.0, help="Số giây tối đa mỗi cảnh (mặc định 35)")
     args = p.parse_args(argv)
 
     try:
         raw = Path(args.srt).read_text(encoding="utf-8-sig")
     except OSError as e:
-        print(f"[err] 无法读取字幕: {e}", file=sys.stderr)
+        print(f"[err] Không đọc được phụ đề: {e}", file=sys.stderr)
         return 1
 
     cues = parse_srt(raw)
     if not cues:
-        print("[err] 未解析到任何字幕条，请检查 SRT 格式", file=sys.stderr)
+        print("[err] Không phân tích được dòng phụ đề nào, hãy kiểm tra định dạng SRT", file=sys.stderr)
         return 1
     scenes = group_scenes(cues, args.target_sec, args.min_sec, args.max_sec)
 
     total_ms = cues[-1]["endMs"] - cues[0]["startMs"]
-    print(f"字幕条: {len(cues)}  总时长: {total_ms/1000:.1f}s  建议场景: {len(scenes)}", file=sys.stderr)
+    print(f"Số dòng phụ đề: {len(cues)}  Tổng thời lượng: {total_ms/1000:.1f}s  Số cảnh đề xuất: {len(scenes)}", file=sys.stderr)
     for s in scenes:
-        print(f"  幕{s['sceneIndex']:>2}  {s['startMs']/1000:6.1f}-{s['endMs']/1000:6.1f}s "
-              f"({s['sceneDurationMs']/1000:4.1f}s, 字幕{s['cueRange'][0]}-{s['cueRange'][1]}): "
+        print(f"  Cảnh {s['sceneIndex']:>2}  {s['startMs']/1000:6.1f}-{s['endMs']/1000:6.1f}s "
+              f"({s['sceneDurationMs']/1000:4.1f}s, phụ đề {s['cueRange'][0]}-{s['cueRange'][1]}): "
               f"{s['text'][:40]}", file=sys.stderr)
 
     json.dump({"cues": cues, "scenes": scenes}, sys.stdout, ensure_ascii=False, indent=2)

@@ -43,16 +43,16 @@ def interpreter_path() -> Path:
 def ensure_venv(check_only: bool) -> Path:
     py = interpreter_path()
     if VENV_ROOT.exists() and py.exists():
-        print(f"[ok] 复用现有虚拟环境: {VENV_ROOT}")
+        print(f"[ok] Dùng lại môi trường ảo có sẵn: {VENV_ROOT}")
         return py
 
     if check_only:
-        print(f"[err] 虚拟环境尚未建立: {VENV_ROOT}")
+        print(f"[err] Chưa tạo môi trường ảo: {VENV_ROOT}")
         sys.exit(1)
 
-    print(f"[..] 建立虚拟环境: {VENV_ROOT}")
+    print(f"[..] Tạo môi trường ảo: {VENV_ROOT}")
     venv.create(str(VENV_ROOT), with_pip=True)
-    print("[ok] 虚拟环境就绪")
+    print("[ok] Môi trường ảo đã sẵn sàng")
     return py
 
 
@@ -67,16 +67,16 @@ def can_import(py: Path, import_name: str) -> bool:
 def install(py: Path, packages: list[str]) -> bool:
     if not packages:
         return True
-    print(f"[..] 安装依赖: {', '.join(packages)}")
+    print(f"[..] Cài phụ thuộc: {', '.join(packages)}")
     res = subprocess.run(
         [str(py), "-m", "pip", "install", "--quiet", *packages],
         capture_output=True,
         text=True,
     )
     if res.returncode != 0:
-        print(f"[err] 安装失败:\n{res.stderr}")
+        print(f"[err] Cài đặt thất bại:\n{res.stderr}")
         return False
-    print("[ok] 依赖安装完成")
+    print("[ok] Cài phụ thuộc xong")
     return True
 
 
@@ -95,7 +95,7 @@ def main() -> None:
 
     if missing:
         if check_only:
-            print(f"\n缺 {len(missing)} 个依赖: {', '.join(missing)}")
+            print(f"\nThiếu {len(missing)} phụ thuộc: {', '.join(missing)}")
             sys.exit(1)
         if not install(py, missing):
             sys.exit(1)

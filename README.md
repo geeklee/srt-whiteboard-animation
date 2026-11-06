@@ -1,86 +1,90 @@
-# SRT 白板动画 Skill
+# Skill hoạt hình bảng trắng từ SRT
 
-将 SRT 字幕转为按叙事顺序绘制的白板手绘视频Skill。它结合了**分区遮罩编排**与**流式笔迹绘制**：每个元素跟随字幕依次出场，笔尖在区域内连续落墨，再逐步添彩，最终导出 MP4。
+**Tiếng Việt** · [English](README.en.md) · [中文](README.zh.md)
 
-适合把知识讲解、故事口播、课程字幕或短视频文案制作成暖米黄色纸张底的手绘动画。
+> Bản dịch tiếng Việt và tiếng Anh của [geeklee/srt-whiteboard-animation](https://github.com/geeklee/srt-whiteboard-animation) (giấy phép MIT). Bản gốc tiếng Trung được giữ ở các tệp `*.zh.*`.
 
-## 效果示例
+Skill biến phụ đề SRT thành video bảng trắng vẽ tay, các thành phần được vẽ theo đúng thứ tự kể chuyện. Skill kết hợp **dàn dựng bằng mặt nạ theo vùng** với **nét bút chảy liên tục**: mỗi thành phần xuất hiện lần lượt theo phụ đề, đầu bút đổ mực liên tục trong vùng rồi tô màu dần, cuối cùng xuất ra MP4.
 
-**场景：猴子山抢香蕉** —— 随着字幕的叙事顺序，依次绘制假山与小猴、抢香蕉的大猴，以及围观小朋友。
+Phù hợp để làm hoạt hình vẽ tay trên nền giấy vàng be ấm từ bài giảng, truyện kể, phụ đề khóa học hoặc kịch bản video ngắn.
 
-![猴子山抢香蕉：SRT 白板动画演示](examples/scene-01-monkey-mountain-stream.gif)
+## Ví dụ
 
-原始线稿：[查看 PNG](examples/scene-01-monkey-mountain.png)。
+**Cảnh: khỉ giành chuối trên núi giả** — theo thứ tự kể chuyện trong phụ đề, lần lượt vẽ núi giả và chú khỉ con, con khỉ lớn giành chuối, và các em nhỏ đứng xem.
 
-## 核心能力
+![Khỉ giành chuối trên núi giả: demo hoạt hình bảng trắng từ SRT](examples/scene-01-monkey-mountain-stream.gif)
 
-- 解析 SRT 字幕，并按建议的 25–35 秒时长拆分场景
-- 先输出分镜与配图策略，确保每一幕只表达一个核心意思
-- 按字幕事件而非画面坐标，为元素建立语义化的绘制顺序
-- 用 `annotation.json` 管理区域、时序、字幕关联和重叠保护区
-- 每个区域采用连续流式笔迹：先 `ink` 铺线稿，再 `color` 添彩
-- 支持浏览器预览台调整区域、顺序、时间和字幕关联
-- 支持逐幕渲染与多幕合并，输出完整 MP4
+Line art gốc: [xem PNG](examples/scene-01-monkey-mountain.png).
 
-## 工作方式
+## Khả năng chính
 
-该 Skill 的关键在于“字幕驱动、逐步确认”。每一步完成后都等待确认，避免在分镜、线稿或标注尚未定稿时浪费渲染成本：
+- Phân tích phụ đề SRT và chia cảnh theo thời lượng đề xuất 25–35 giây
+- Đưa ra storyboard và chiến lược hình minh họa trước, bảo đảm mỗi cảnh chỉ diễn đạt một ý cốt lõi
+- Sắp thứ tự vẽ theo ngữ nghĩa của sự kiện trong phụ đề, không theo tọa độ trên ảnh
+- Dùng `annotation.json` để quản lý vùng, thời gian, liên kết với phụ đề và vùng bảo vệ khi chồng nhau
+- Mỗi vùng vẽ bằng nét bút liên tục: `ink` phủ line art trước, `color` tô màu sau
+- Có bảng xem trước trên trình duyệt để chỉnh vùng, thứ tự, thời gian và liên kết phụ đề
+- Render từng cảnh và ghép nhiều cảnh thành MP4 hoàn chỉnh
 
-1. 解析 SRT，输出分镜与配图策略。
-2. 确认后生成统一风格的线稿。
-3. 确认线稿后，结合字幕和原图创建标注，并载入预览台。
-4. 确认标注后，生成分区与方向检查图。
-5. 在预览台调整区域、叙事顺序、时序和字幕关联并保存。
-6. 确认最终标注后，逐幕渲染 MP4。
-7. 多幕项目在确认各幕成片后合并。
+## Cách làm việc
 
-## 视觉规范
+Điểm mấu chốt của skill là "phụ đề dẫn dắt, xác nhận từng bước". Sau mỗi bước đều dừng chờ xác nhận, tránh tốn công render khi storyboard, line art hay annotation chưa chốt:
 
-- 暖米黄色纸张背景：建议 `#F5EBD7`
-- 深灰色素描线条，红、橙、蓝仅作少量概念性点缀
-- 极简手绘、干净背景与充足留白
-- 不使用场景文字、标签、摄影感、3D 效果或复杂纹理
+1. Phân tích SRT, đưa ra storyboard và chiến lược hình minh họa.
+2. Sau khi được xác nhận, tạo line art cùng một phong cách.
+3. Sau khi xác nhận line art, kết hợp phụ đề và ảnh gốc để tạo annotation, rồi nạp vào bảng xem trước.
+4. Sau khi xác nhận annotation, xuất ảnh kiểm tra vùng và hướng.
+5. Trong bảng xem trước, chỉnh vùng, thứ tự kể chuyện, thời gian và liên kết phụ đề rồi lưu.
+6. Sau khi xác nhận annotation cuối cùng, render MP4 từng cảnh.
+7. Với dự án nhiều cảnh, ghép lại sau khi xác nhận thành phẩm từng cảnh.
 
-## 安装与环境
+## Quy chuẩn hình ảnh
 
-Skill 自带独立的 Python 虚拟环境准备脚本。首次运行时执行：
+- Nền giấy vàng be ấm: đề xuất `#F5EBD7`
+- Nét phác xám đậm; đỏ, cam, xanh dương chỉ dùng làm điểm nhấn khái niệm với số lượng ít
+- Vẽ tay tối giản, nền sạch, nhiều khoảng trống
+- Không dùng chữ trong cảnh, nhãn, cảm giác ảnh chụp, hiệu ứng 3D hay chất liệu phức tạp
+
+## Cài đặt và môi trường
+
+Skill có sẵn script chuẩn bị môi trường ảo Python riêng. Lần chạy đầu tiên, thực hiện:
 
 ```bash
 python scripts/prepare_env.py --check
 python scripts/prepare_env.py
 ```
 
-成功后第一条命令会输出 `ENV_PY=<路径>`；后续渲染请使用该解释器，确保依赖隔离。
+Khi thành công, lệnh đầu tiên in ra `ENV_PY=<đường dẫn>`; các bước render sau đó hãy dùng trình thông dịch này để cô lập phụ thuộc.
 
-## 项目素材结构
+## Cấu trúc tài nguyên dự án
 
 ```text
-assets/whiteboard/<项目名>/
-├── scene-01-<名称>.png
-├── scene-01-<名称>.annotation.json
-├── scene-01-<名称>-whiteboard.mp4
-└── scene-01-<名称>-preview.mp4
+assets/whiteboard/<tên dự án>/
+├── scene-01-<tên>.png
+├── scene-01-<tên>.annotation.json
+├── scene-01-<tên>-whiteboard.mp4
+└── scene-01-<tên>-preview.mp4
 ```
 
-图片与标注必须同名，例如 `scene-01-demo.png` 对应 `scene-01-demo.annotation.json`。
+Ảnh và annotation phải cùng tên, ví dụ `scene-01-demo.png` ứng với `scene-01-demo.annotation.json`.
 
-## 标注格式
+## Định dạng annotation
 
-每个元素使用原图的整数像素坐标，并通过 `sequence`、`subtitle` 与 `narrativeRole` 关联字幕中的事件。区域应按“场景铺垫 → 关键人物/物体 → 动作或变化 → 反应/结果”排序。
+Mỗi thành phần dùng tọa độ pixel nguyên của ảnh gốc, và liên kết với sự kiện trong phụ đề qua `sequence`, `subtitle` và `narrativeRole`. Các vùng nên sắp theo trình tự "bối cảnh → nhân vật/vật chính → hành động hoặc biến đổi → phản ứng/kết quả".
 
 ```json
 {
   "sceneId": "scene-01",
   "canvas": { "width": 1672, "height": 941 },
-  "storyBasis": "小猴在猴子山上拿着香蕉，大猴抢走香蕉，孩子们在旁观看。",
+  "storyBasis": "Chú khỉ con cầm quả chuối trên núi giả, con khỉ lớn giành mất, các em nhỏ đứng xem.",
   "sceneDurationMs": 9000,
   "elements": [
     {
       "id": "rockery",
-      "label": "猴子山场景",
+      "label": "Cảnh núi giả",
       "sequence": 1,
-      "narrativeRole": "故事的场景铺垫",
-      "subtitle": "小猴子坐在猴子山顶，手里拿着香蕉。",
+      "narrativeRole": "Bối cảnh mở đầu câu chuyện",
+      "subtitle": "Chú khỉ con ngồi trên đỉnh núi giả, tay cầm quả chuối.",
       "type": "structure",
       "region": { "x": 20, "y": 120, "width": 540, "height": 780 },
       "reveal": {
@@ -96,74 +100,75 @@ assets/whiteboard/<项目名>/
 }
 ```
 
-`direction` 和 `handPath` 用于预览台的矩形代理；最终成片的真实笔迹由流式绘制器自动生成。对于相互遮挡的对象，在较早元素的 `protectedRegions` 中标出需要延后显示的区域，避免后续内容提前露出。
+`direction` và `handPath` chỉ dùng cho hình chữ nhật đại diện trong bảng xem trước; nét bút thật của thành phẩm do bộ vẽ stream tự sinh. Với các đối tượng che nhau, hãy đánh dấu trong `protectedRegions` của thành phần xuất hiện sớm hơn những vùng cần hiện muộn, để nội dung phía sau không lộ ra sớm.
 
-## 常用命令
+## Các lệnh thường dùng
 
-解析字幕并生成建议分镜：
+Phân tích phụ đề và tạo đề xuất chia cảnh:
 
 ```bash
-python scripts/parse_srt.py <字幕.srt> --target-sec 30 --min-sec 25 --max-sec 35
+python scripts/parse_srt.py <phụ đề.srt> --target-sec 30 --min-sec 25 --max-sec 35
 ```
 
-生成区域检查图：
+Tạo ảnh kiểm tra vùng:
 
 ```bash
-python scripts/render_annotation_preview.py <图片路径> <标注路径> <预览图输出路径>
+python scripts/render_annotation_preview.py <đường dẫn ảnh> <đường dẫn annotation> <đường dẫn ảnh xem trước đầu ra>
 ```
 
-打开 `assets/preview.html`，使用“打开文件夹”载入场景目录，即可编辑区域、顺序、时间与字幕关联。
+Mở `assets/preview.html`, bấm "Mở thư mục…" để nạp thư mục cảnh, rồi chỉnh vùng, thứ tự, thời gian và liên kết phụ đề.
 
-渲染单幕：
+Render một cảnh:
 
 ```bash
-<ENV_PY> scripts/render_stream_whiteboard.py <图片路径> <标注路径> <输出.mp4> assets/drawing-hand.png \
+<ENV_PY> scripts/render_stream_whiteboard.py <đường dẫn ảnh> <đường dẫn annotation> <đầu ra.mp4> assets/drawing-hand.png \
   --ink-path grid --color-fill contour-wipe
 ```
 
-合并多幕：
+Ghép nhiều cảnh:
 
 ```bash
-<ENV_PY> scripts/merge_scenes.py --inputs 幕1.mp4 幕2.mp4 幕3.mp4 --output final.mp4
+<ENV_PY> scripts/merge_scenes.py --inputs canh1.mp4 canh2.mp4 canh3.mp4 --output final.mp4
 ```
 
-## 质量检查
+## Kiểm tra chất lượng
 
-- 首帧是干净的暖米黄纸张底色，没有提前露出的线条
-- `canvas` 与原图尺寸一致，所有区域都是画布内的整数像素坐标
-- `sequence`、`startMs` 与字幕的叙事顺序一致
-- 中段帧中，未开始区域和保护区不会提前出现
-- 笔尖贴近当前流式笔迹；线稿清晰时可选择 `--ink-path skeleton`
-- 每幕结束后至少停留 0.5 秒完整画面；多幕合并顺序与字幕分镜一致
+- Khung hình đầu là nền giấy vàng be sạch, không lộ nét nào sớm
+- `canvas` khớp kích thước ảnh gốc, mọi vùng là tọa độ pixel nguyên nằm trong canvas
+- `sequence`, `startMs` khớp thứ tự kể chuyện trong phụ đề
+- Ở khung hình giữa, vùng chưa bắt đầu và vùng bảo vệ không hiện ra sớm
+- Đầu bút bám sát nét đang chạy; khi line art rõ có thể chọn `--ink-path skeleton`
+- Cuối mỗi cảnh dừng ít nhất 0,5 giây ở ảnh đầy đủ; thứ tự ghép nhiều cảnh khớp với storyboard theo phụ đề
 
-## 仓库内容
+## Nội dung kho mã
 
 ```text
 srt-whiteboard-animation/
-├── SKILL.md                         # 完整工作流与约束
+├── SKILL.md                         # Quy trình đầy đủ và ràng buộc (tiếng Việt)
+├── SKILL.en.md / SKILL.zh.md        # Bản tiếng Anh / bản gốc tiếng Trung
+├── README.md / README.en.md / README.zh.md
 ├── assets/
-│   ├── drawing-hand.png              # 手部素材
-│   ├── preview.html                  # 本地编辑预览台
-├── examples/                         # README 案例素材
+│   ├── drawing-hand.png              # Ảnh bàn tay
+│   ├── preview.html                  # Bảng xem trước/chỉnh sửa cục bộ (tiếng Việt)
+│   └── preview.en.html / preview.zh.html
+├── examples/                         # Tài nguyên ví dụ cho README
 ├── scripts/
-│   ├── parse_srt.py                  # 字幕解析与分镜建议
-│   ├── render_annotation_preview.py  # 标注检查图
-│   ├── render_stream_whiteboard.py   # 流式笔迹 MP4 渲染器
-│   ├── merge_scenes.py               # 多幕合并
-│   └── prepare_env.py                # 依赖环境准备
-└── agents/openai.yaml                # Codex 元数据
+│   ├── parse_srt.py                  # Phân tích phụ đề và đề xuất chia cảnh
+│   ├── render_annotation_preview.py  # Ảnh kiểm tra annotation
+│   ├── render_stream_whiteboard.py   # Bộ render MP4 nét bút chảy liên tục
+│   ├── merge_scenes.py               # Ghép nhiều cảnh
+│   └── prepare_env.py                # Chuẩn bị môi trường phụ thuộc
+└── agents/openai.yaml                # Metadata cho Codex
 ```
 
-## 贡献
+## Đóng góp
 
-欢迎提交 Issue 或 Pull Request。任何涉及绘制逻辑的改动，都应使用真实的字幕、标注和成片检查遮罩保护、时序与最终画面。
+Hoan nghênh gửi Issue hoặc Pull Request. Mọi thay đổi liên quan đến logic vẽ nên được kiểm tra bằng phụ đề, annotation và thành phẩm thật để xác nhận mặt nạ bảo vệ, thời gian và hình ảnh cuối.
 
-## 许可证
+## Giấy phép
 
-本项目基于 MIT License 开源，详见 [LICENSE](LICENSE)。
+Dự án mã nguồn mở theo MIT License, xem [LICENSE](LICENSE).
 
-## 关于作者
+## Về tác giả gốc
 
-一个爱养鱼的老登 / AI Builder / 用 AI 团队打造一人公司。
-
-抖音、B站、公众号：江哥是老登啊
+Tác giả gốc: 一个爱养鱼的老登 / AI Builder / dùng đội AI xây dựng công ty một người (Douyin, Bilibili, tài khoản công khai: 江哥是老登啊).
