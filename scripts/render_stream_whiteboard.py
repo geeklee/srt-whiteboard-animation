@@ -3,9 +3,11 @@
 SRT 白板动画 - 整合渲染器（mask 编排 + stream 画法）
 
 把一张线稿图 + 同名 annotation.json 渲染成白板手绘动画：
-  - 编排沿用 whiteboard-mask-animation：按 sequence/startMs 顺序逐区域揭示，
+  - 编排沿用 whiteboard-mask-animation：默认按 reveal.startMs 顺序逐区域揭示，
+    若标注提供 elementOrder（或 orderBy=sequence）则按该显式区域顺序，
     每个区域的可作画范围 = 矩形 region 扣除「后续区域 + protectedRegions」，
     未开始的区域因掩码限制不会提前露线（mask 的核心不变量）。
+    元素上的 strokePaths 是成片真实笔顺（笔尖与揭墨共用）；handPath 仍只用于预览代理。
   - 画法换成 whiteboard-stream-animation：每个区域在自己的允许掩码内，
     沿骨架/网格笔迹连续落墨（起笔 ink → 添彩 color），笔尖跟随真实笔迹，
     所有区域共享同一张持久画布，已画完的区域保留在画布上。
@@ -34,6 +36,7 @@ import numpy as np
 _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 import stream_render as sr  # noqa: E402
+import draw_order as draw_order  # noqa: E402
 
 DEFAULT_HAND = _SCRIPT_DIR.parent / "assets" / "drawing-hand.png"
 
@@ -116,6 +119,9 @@ class RegionStreamRenderer:
                 ax, ay = 0.5, 0.70
             self.tip = sr.TipOverlay(hand_data[0], hand_data[1], tip_anchor_x=ax, tip_anchor_y=ay)
 
+        # 可选：记录每帧笔尖位置，供顺序/对齐核验（不改变画面）
+        self.tip_log: list[dict] = []
+
     # 采样原图四角，把接近背景色的像素替换为画布底色
     def _match_original_background(self) -> None:
         img = self.color_img
@@ -137,6 +143,22 @@ class RegionStreamRenderer:
         if self.tip is not None:
             self.tip.stamp(snap, px, py)
         return snap
+
+    def _write_frame(self, writer, px: int | None, py: int | None, *,
+                     element_id: str | None = None, phase: str = "") -> None:
+        eid = element_id if element_id is not None else getattr(self, "_current_element_id", None)
+        phase = phase or getattr(self, "_current_phase", "")
+        if px is None or py is None:
+            snap = self.drawn.astype(np.uint8)
+            writer.write(snap)
+            self.tip_log.append({
+                "x": None, "y": None, "elementId": eid, "phase": phase, "tip": False,
+            })
+            return
+        writer.write(self._snapshot_with_tip(px, py))
+        self.tip_log.append({
+            "x": int(px), "y": int(py), "elementId": eid, "phase": phase, "tip": True,
+        })
 
     # ── 单区域的允许掩码：矩形 - 后续区域 - protectedRegions ──
     def _allowed_mask(self, element: dict, later_elements: list[dict]) -> np.ndarray:
@@ -225,20 +247,18 @@ class RegionStreamRenderer:
         n = len(samples)
         if n == 0:
             for _ in range(frames):
-                writer.write(self._snapshot_with_tip(self.out_w // 2, self.out_h // 2))
+                self._write_frame(writer, None, None)
             return
         idx_for_frame = _frame_progress_indices(n, frames)
         last: int | None = None
         for si in idx_for_frame:
-            if last is None:
-                self._reveal_ink_segment(samples[si], samples[si], allowed)
-            else:
-                for k in range(last + 1, si + 1):
-                    if k in pen_lifts:
-                        continue
-                    self._reveal_ink_segment(samples[k - 1], samples[k], allowed)
+            # Even a one-frame phase consumes the entire path. Stamp each
+            # new stroke start (including dots), never connect pen lifts.
+            for k in range(0 if last is None else last + 1, si + 1):
+                a = samples[k] if k == 0 or k in pen_lifts else samples[k - 1]
+                self._reveal_ink_segment(a, samples[k], allowed)
             sx, sy = samples[si]
-            writer.write(self._snapshot_with_tip(sx, sy))
+            self._write_frame(writer, sx, sy)
             last = si
 
     # ── 添彩段：brush 或 contour-wipe，限制在 allowed 内 ──
@@ -248,19 +268,16 @@ class RegionStreamRenderer:
         n = len(centers)
         if n == 0:
             for _ in range(frames):
-                writer.write(self._snapshot_with_tip(self.out_w // 2, self.out_h // 2))
+                self._write_frame(writer, None, None)
             return
         disk = sr._feathered_disk(self.cfg.brush_radius)
         idx_for_frame = _frame_progress_indices(n, frames)
         last: int | None = None
         for ci in idx_for_frame:
-            if last is None:
-                self._color_stamp(*centers[ci], disk, allowed)
-            else:
-                for k in range(last + 1, ci + 1):
-                    self._color_stamp(*centers[k], disk, allowed)
+            for k in range(0 if last is None else last + 1, ci + 1):
+                self._color_stamp(*centers[k], disk, allowed)
             cx, cy = centers[ci]
-            writer.write(self._snapshot_with_tip(cx, cy))
+            self._write_frame(writer, cx, cy)
             last = ci
 
     def _wash_contour(self, writer, frames: int, allowed: np.ndarray) -> None:
@@ -269,6 +286,8 @@ class RegionStreamRenderer:
         cfg = self.cfg
         ys_all, xs_all = np.where(allowed)
         if ys_all.size == 0:
+            for _ in range(frames):
+                self._write_frame(writer, None, None)
             return
         top, bottom = int(ys_all.min()), int(ys_all.max())
         left, right = int(xs_all.min()), int(xs_all.max())
@@ -315,7 +334,7 @@ class RegionStreamRenderer:
             cx = max(0, min(region_w - 1, cx))
             col = np.where(reveal[:, cx])[0]
             cy = int(col[-1]) if col.size > 0 else 0
-            writer.write(self._snapshot_with_tip(left + cx, top + cy))
+            self._write_frame(writer, left + cx, top + cy)
 
         # 收尾：确保区域内允许像素全部揭示
         drawn_crop[allowed_crop] = color_crop[allowed_crop]
@@ -348,7 +367,9 @@ class RegionStreamRenderer:
     # ── 主渲染 ──
     def render_to(self, raw_path: Path, total_ms: int) -> Path:
         cfg = self.cfg
-        elements = sorted(self.ann["elements"], key=lambda e: e["reveal"]["startMs"])
+        elements, order_warnings = draw_order.ordered_elements(self.ann)
+        for message in order_warnings:
+            print(f"[warn] {message}")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(raw_path), fourcc, cfg.fps, (self.out_w, self.out_h))
         if not writer.isOpened():
@@ -357,15 +378,18 @@ class RegionStreamRenderer:
         weight_sum = cfg.ink_weight + cfg.color_weight
         cur_ms = 0.0
         ms_per_frame = 1000.0 / cfg.fps
+        self.tip_log = []
 
-        def fill_static(until_ms: float) -> None:
+        def fill_static(until_ms: float, *, phase: str = "hold") -> None:
             nonlocal cur_ms
             n = int(round((until_ms - cur_ms) / ms_per_frame))
             if n <= 0:
                 return
-            snap = self.drawn.astype(np.uint8)
+            prev_phase = getattr(self, "_current_phase", "")
+            self._current_phase = phase
             for _ in range(n):
-                writer.write(snap)
+                self._write_frame(writer, None, None, phase=phase)
+            self._current_phase = prev_phase
             cur_ms += n * ms_per_frame
 
         try:
@@ -373,13 +397,29 @@ class RegionStreamRenderer:
                 reveal = element["reveal"]
                 start_ms = reveal["startMs"]
                 dur_ms = reveal["durationMs"]
-                fill_static(start_ms)
+                element_id = str(element["id"]) if element.get("id") is not None else None
+                self._current_element_id = element_id
+                fill_static(start_ms, phase="hold")
 
                 allowed = self._allowed_mask(element, elements[idx + 1:])
                 ink_frames = max(1, round(dur_ms * cfg.ink_weight / weight_sum * cfg.fps / 1000))
                 color_frames = max(1, round(dur_ms * cfg.color_weight / weight_sum * cfg.fps / 1000))
 
-                if cfg.ink_path_mode == "skeleton":
+                explicit, stroke_paths, path_warnings = draw_order.parse_stroke_paths(
+                    element, self.sx, self.sy
+                )
+                for message in path_warnings:
+                    print(f"[warn] {message}")
+
+                self._current_phase = "ink"
+                if explicit:
+                    # 显式定向笔画：笔尖与揭墨共用同一采样时间线；不回退自动路径
+                    samples, pen_lifts = draw_order.plan_stroke_samples(
+                        stroke_paths, sample_step=cfg.sample_step
+                    )
+                    self._lay_ink(writer, ink_frames, samples, pen_lifts, allowed)
+                    centers = samples
+                elif cfg.ink_path_mode == "skeleton":
                     strokes = self._region_skeleton_strokes(allowed)
                     if strokes:
                         samples, pen_lifts = [], set()
@@ -402,21 +442,29 @@ class RegionStreamRenderer:
                         self._lay_ink_grid(writer, ink_frames, samples, pen_lifts, sample_cell, path, allowed)
                         centers = [self._cell_center(c) for c in path]
                     else:
-                        self._lay_ink(writer, ink_frames, [], set(), None, allowed)
+                        self._lay_ink(writer, ink_frames, [], set(), allowed)
                         centers = []
 
                 cur_ms += ink_frames * ms_per_frame
 
-                if cfg.color_fill == "contour-wipe":
+                self._current_phase = "color"
+                if explicit:
+                    # Explicit paths constrain all phases: a broad colour
+                    # brush/contour must not reveal unspecified source ink.
+                    reached = np.any(self.drawn != self.canvas_bgr, axis=2) & allowed
+                    self._wash_brush(writer, color_frames, centers, reached)
+                elif cfg.color_fill == "contour-wipe":
                     self._wash_contour(writer, color_frames, allowed)
                 else:
                     self._wash_brush(writer, color_frames, centers, allowed)
                 cur_ms += color_frames * ms_per_frame
 
-            # 凝视：补到 total_ms，并确保结尾至少停留 0.5s 完整原图
+            # 凝视：补到 total_ms，并至少停留 0.5s；显式场景保留实际绘制结果
             gaze_until = max(total_ms, cur_ms + 500)
-            # 最终帧显示完整原图（凝视）
-            self.drawn[...] = self.color_img.astype(np.float32)
+            # Legacy scenes finish with the source image. Explicit scenes hold
+            # the actual drawn result; omitted/protected ink must not pop in.
+            if not any(draw_order.has_explicit_stroke_paths(e) for e in elements):
+                self.drawn[...] = self.color_img.astype(np.float32)
             fill_static(gaze_until)
         finally:
             writer.release()
@@ -429,7 +477,7 @@ class RegionStreamRenderer:
         n = len(samples)
         if n == 0:
             for _ in range(frames):
-                writer.write(self._snapshot_with_tip(self.out_w // 2, self.out_h // 2))
+                self._write_frame(writer, None, None)
             return
         idx_for_frame = _frame_progress_indices(n, frames)
         cells_done = 0
@@ -447,7 +495,7 @@ class RegionStreamRenderer:
                 self._ink_stamp_cell(path[cells_done], allowed)
                 cells_done += 1
             sx, sy = samples[si]
-            writer.write(self._snapshot_with_tip(sx, sy))
+            self._write_frame(writer, sx, sy)
             last = si
         while cells_done < len(path):
             self._ink_stamp_cell(path[cells_done], allowed)
@@ -473,6 +521,8 @@ def _parse_args(argv=None):
     p.add_argument("--brush-radius", type=int, default=None)
     p.add_argument("--cap-long-edge", type=int, default=None,
                    help="输出长边像素上限（预览可调小加速，默认 1080）")
+    p.add_argument("--tip-log", default=None,
+                   help="把每帧笔尖坐标写成 JSON，用于核验顺序与对齐（可选）")
     return p.parse_args(argv)
 
 
@@ -506,11 +556,13 @@ def main(argv=None) -> int:
         return 1
     try:
         annotation = json.loads(Path(args.annotation).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
         print(f"[err] 无法读取标注: {e}")
         return 1
-    if not annotation.get("elements"):
-        print("[err] 标注中没有 elements")
+    errors = draw_order.annotation_errors(annotation)
+    if errors:
+        for message in errors:
+            print(f"[err] {message}")
         return 1
 
     total_ms = args.total_ms if args.total_ms is not None else annotation.get("sceneDurationMs")
@@ -526,10 +578,22 @@ def main(argv=None) -> int:
     renderer = RegionStreamRenderer(image_bgr, annotation, cfg, hand_png, args.bare_tip)
     print(f"  输入: {args.image}")
     print(f"  输出尺寸: {renderer.out_w}x{renderer.out_h}, 帧率: {cfg.fps}")
+    explicit_count = sum(draw_order.has_explicit_stroke_paths(e) for e in annotation["elements"])
+    if explicit_count == len(annotation["elements"]):
+        color_mode = "explicit-path brush (revealed ink only)"
+    elif explicit_count:
+        color_mode = f"explicit-path brush (revealed ink only); auto regions: {cfg.color_fill}"
+    else:
+        color_mode = cfg.color_fill
     print(f"  区域数: {len(annotation['elements'])}, 总时长: {total_ms}ms, "
-          f"笔迹: {cfg.ink_path_mode}, 上色: {cfg.color_fill}")
+          f"笔迹: {cfg.ink_path_mode} (explicit strokePaths override), 上色: {color_mode}")
 
     renderer.render_to(raw_path, total_ms)
+    if args.tip_log:
+        tip_path = Path(args.tip_log)
+        tip_path.parent.mkdir(parents=True, exist_ok=True)
+        tip_path.write_text(json.dumps(renderer.tip_log, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  笔尖日志: {tip_path} ({len(renderer.tip_log)} 帧)")
     final = sr.transcode_h264(raw_path, out_path)
 
     size_mb = final.stat().st_size / (1024 * 1024)

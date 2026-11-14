@@ -80,7 +80,7 @@
       点 <b>打开文件夹…</b> 选择存放线稿的目录（内含成对的 <code>&lt;名称&gt;.png</code> + <code>&lt;名称&gt;.annotation.json</code>）。<br><br>
       载入后：默认显示完整图片和区域框；拖动方框整体移动、拖四角/四边缩放调 <code>region</code>；右侧精确改数值、方向、<b>开始/结束时间</b>与<b>字幕</b>；拖动模块列表可<b>调整顺序</b>。拖时间轴或按播放看<b>矩形代理揭示</b>（未开始区域不显示）。<br><br>
       改完点 <b>保存本场景</b> / <b>全部保存</b> 写回原 <code>.annotation.json</code>（含每个区域的字幕）。<br>
-      <span class="muted">写回原文件需 Chrome / Edge（File System Access API）；其它浏览器将改为下载，请手动覆盖原文件。矩形代理只用于布局/时序；真实连续笔迹请用命令行 <code>render_stream_whiteboard.py</code> 渲染。</span>
+      <span class="muted">写回原文件需 Chrome / Edge（File System Access API）；其它浏览器将改为下载，请手动覆盖原文件。矩形代理只用于布局/时序，不核验 strokePaths 揭墨或末帧（路径笔尖仅近似默认 2:1 分段；自定义参数/帧取整以成片为准）；真实连续笔迹请用命令行 <code>render_stream_whiteboard.py</code> 渲染。</span>
     </div>
     <canvas id="canvas" hidden></canvas>
   </div>
@@ -139,8 +139,82 @@ const S = { scenes: [], idx: -1, cfg: null, cfgHandle: null, dirHandle: null,
 
 const els = () => S.cfg ? S.cfg.elements : [];
 const endMs = e => e.reveal.startMs + e.reveal.durationMs;
-function totalMs() {
+
+// 与成片渲染器相同的区域顺序：elementOrder > orderBy=sequence > startMs
+function orderedElements() {
   const arr = els();
+  const orderIds = S.cfg && Array.isArray(S.cfg.elementOrder) ? S.cfg.elementOrder : [];
+  if (orderIds.length) {
+    const byId = new Map();
+    arr.forEach(e => { if (e && e.id != null && !byId.has(String(e.id))) byId.set(String(e.id), e); });
+    const used = new Set();
+    const out = [];
+    orderIds.forEach(id => {
+      const e = byId.get(String(id));
+      if (e && !used.has(e)) { out.push(e); used.add(e); }
+    });
+    out.push(...arr.filter(e => !used.has(e)).sort((a,b) => a.reveal.startMs - b.reveal.startMs));
+    return out;
+  }
+  if (S.cfg && S.cfg.orderBy === 'sequence') {
+    return arr.slice().sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || a.reveal.startMs - b.reveal.startMs);
+  }
+  return arr.slice().sort((a, b) => a.reveal.startMs - b.reveal.startMs);
+}
+
+function strokePolylines(e) {
+  if (!e || e.strokePaths == null || !Array.isArray(e.strokePaths)) return [];
+  const lines = [];
+  const coord = v => (typeof v === 'number' || typeof v === 'boolean' ||
+    (typeof v === 'string' && v.trim() !== '')) ? Number(v) : NaN;
+  e.strokePaths.forEach(item => {
+    const raw = (item && item.points) ? item.points : item;
+    if (!Array.isArray(raw)) return;
+    const pts = raw.map(pt => {
+      if (Array.isArray(pt) && pt.length >= 2) return [coord(pt[0]), coord(pt[1])];
+      if (pt && Number.isFinite(coord(pt.x)) && Number.isFinite(coord(pt.y))) return [coord(pt.x), coord(pt.y)];
+      return null;
+    }).filter(pt => pt && Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+    if (pts.length) lines.push(pts);
+  });
+  return lines;
+}
+
+function tipAlongStrokes(lines, p) {
+  const segs = [];
+  let total = 0;
+  lines.forEach(line => {
+    if (line.length === 1) { segs.push({ a: line[0], b: line[0], len: 0, start: total }); return; }
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i-1], b = line[i];
+      const len = Math.hypot(b[0]-a[0], b[1]-a[1]);
+      segs.push({ a, b, len, start: total });
+      total += len;
+    }
+  });
+  if (!segs.length) return null;
+  if (total <= 0) return segs[0].a;
+  const target = Math.max(0, Math.min(1, p)) * total;
+  for (const s of segs) {
+    if (target <= s.start + s.len || s === segs[segs.length-1]) {
+      const t = s.len > 0 ? (target - s.start) / s.len : 0;
+      return [s.a[0] + (s.b[0]-s.a[0])*t, s.a[1] + (s.b[1]-s.a[1])*t];
+    }
+  }
+  return segs[segs.length-1].b;
+}
+// Starts are earliest-start constraints, not parallel playback. Like the
+// renderer, serialise reordered elements; preview uses nominal ms, not FPS rounding.
+function scheduledElements() {
+  let cursor = 0;
+  return orderedElements().map(e => {
+    const startMs = Math.max(cursor, e.reveal.startMs);
+    cursor = startMs + e.reveal.durationMs;
+    return { ...e, reveal: { ...e.reveal, startMs } };
+  });
+}
+function totalMs() {
+  const arr = scheduledElements();
   const maxEnd = arr.length ? Math.max(...arr.map(endMs)) : 0;
   return Math.max(S.cfg && S.cfg.sceneDurationMs || 0, maxEnd + 500, 1000);
 }
@@ -231,6 +305,12 @@ function samplePaper() {
 const getProgress = (t, e) => clamp((t - e.reveal.startMs) / e.reveal.durationMs, 0, 1);
 function wobble(a, s) { const env = Math.sin(a*Math.PI); return (Math.sin(a*Math.PI*2*3+s)*1.8 + Math.sin(a*Math.PI*2*7.3+s*1.7)*0.7) * env; }
 function tipPos(e, p) {
+  if (e.strokePaths != null) {
+    // Default final-renderer phases are 2:1 ink then colour. This is still
+    // a layout proxy, not a pixel-accurate render (see the on-screen notice).
+    const phaseP = p < 2/3 ? p * 1.5 : (p - 2/3) * 3;
+    return tipAlongStrokes(strokePolylines(e), phaseP);
+  }
   const hp = e.handPath || {}; const s = hp.start || [e.region.x, e.region.y], ed = hp.end || [e.region.x, e.region.y+e.region.height];
   const d = e.reveal.direction, seed = e.region.x*0.13 + e.region.y*0.27, w = wobble(p, seed);
   const x = s[0] + (ed[0]-s[0])*p, y = s[1] + (ed[1]-s[1])*p;
@@ -249,14 +329,15 @@ function render() {
   canvas.width = w; canvas.height = h;
   ctx.fillStyle = S.paper; ctx.fillRect(0, 0, w, h);
   const arr = els();
-  const done = arr.length ? Math.max(...arr.map(endMs)) : 0;
+  const schedule = scheduledElements();
+  const done = schedule.length ? Math.max(...schedule.map(endMs)) : 0;
   // 未播放且在起点（或无模块、或已全部揭示完）→ 显示完整图片
   const showFull = !arr.length || (!S.playing && S.time <= 0) || S.time >= done + 500;
   if (showFull) {
     ctx.drawImage(S.source, 0, 0, w, h);
   } else {
     let active = null;
-    const ordered = arr.slice().sort((a, b) => a.reveal.startMs - b.reveal.startMs);
+    const ordered = schedule;
     mask.width = w; mask.height = h; maskCtx.clearRect(0, 0, w, h);
     ordered.forEach((e, index) => {
       const p = getProgress(S.time, e); if (!p) return;
@@ -270,8 +351,11 @@ function render() {
     });
     ctx.drawImage(mask, 0, 0);
     if (active && hand.complete && hand.naturalWidth) {
-      const [e, p] = active, [tx, ty] = tipPos(e, p), s = w / 1672 * 0.42;
-      ctx.drawImage(hand, tx - 115*s, ty - 77*s, hand.width*s, hand.height*s);
+      const [e, p] = active, pos = tipPos(e, p), s = w / 1672 * 0.42;
+      if (pos) {
+        const [tx, ty] = pos;
+        ctx.drawImage(hand, tx - 115*s, ty - 77*s, hand.width*s, hand.height*s);
+      }
     }
   }
   if (S.showOverlay && arr.length) drawOverlay();
@@ -293,7 +377,25 @@ function drawOverlay() {
     ctx.fillStyle = focus ? '#3b82f6' : '#e97036';
     ctx.beginPath(); ctx.arc(r.x+18, r.y+18, 15, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 18px "Microsoft YaHei"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(i+1, r.x+18, r.y+18);
+    ctx.fillText(orderedElements().indexOf(e)+1, r.x+18, r.y+18);
+    const lines = strokePolylines(e);
+    if (lines.length) {
+      ctx.strokeStyle = focus ? '#0f766e' : '#0d9488';
+      ctx.lineWidth = focus ? 3 : 2;
+      ctx.setLineDash([]);
+      lines.forEach(line => {
+        ctx.beginPath();
+        line.forEach((pt, k) => k ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]));
+        ctx.stroke();
+        const a = line[line.length-2] || line[0], b = line[line.length-1];
+        const ang = Math.atan2(b[1]-a[1], b[0]-a[0]);
+        ctx.beginPath();
+        ctx.moveTo(b[0], b[1]);
+        ctx.lineTo(b[0]-12*Math.cos(ang-0.4), b[1]-12*Math.sin(ang-0.4));
+        ctx.lineTo(b[0]-12*Math.cos(ang+0.4), b[1]-12*Math.sin(ang+0.4));
+        ctx.closePath(); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+      });
+    }
     if (focus) {
       ctx.fillStyle = '#fff'; ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 3;
       Object.values(handlesOf(r)).forEach(([x, y]) => { ctx.fillRect(x-10, y-10, 20, 20); ctx.strokeRect(x-10, y-10, 20, 20); });
@@ -324,6 +426,9 @@ function reorder(from, to) {
   const arr = els(); if (from < 0 || to < 0 || from === to) return;
   const [m] = arr.splice(from, 1); arr.splice(to, 0, m);
   arr.forEach((e, i) => e.sequence = i + 1);       // 顺序即 sequence
+  if (S.cfg && Array.isArray(S.cfg.elementOrder) && S.cfg.elementOrder.length) {
+    S.cfg.elementOrder = arr.map(e => e.id).filter(id => id != null);
+  }
   S.sel = to; markDirty(); syncEditor(); renderList(); renderSubs(); render();
 }
 

@@ -1,0 +1,279 @@
+{
+  "fps": 30,
+  "frameCount": 126,
+  "outputSize": {
+    "width": 960,
+    "height": 540
+  },
+  "verification": "Pixel assertions use a fresh --bare-tip render with identical tip-log; not the dark pen overlay.",
+  "sha256": {
+    "scene-explicit-order-whiteboard.mp4": "c573b11a5b4a8144b0f25f56f32abe6f16674137202bbbbcc50683183b7ca078",
+    "scene-explicit-order.annotation.json": "a05b915dee8731472fc46ad490ba010c2cb2ed1475baf3b60805b9a1102e1cfc",
+    "tip-log.json": "2543a087c1df7f558c1e0db8f478fb72ceb25d5e6b07b44e4599ea31efd17a45"
+  },
+  "frames": {
+    "00-blank": {
+      "frameIndex": 0,
+      "timeMs": 0,
+      "tip": {
+        "x": null,
+        "y": null,
+        "elementId": "sun",
+        "phase": "hold",
+        "tip": false
+      },
+      "file": "frames/00-blank.png"
+    },
+    "01-sun-start": {
+      "frameIndex": 6,
+      "timeMs": 200,
+      "tip": {
+        "x": 772,
+        "y": 160,
+        "elementId": "sun",
+        "phase": "ink",
+        "tip": true
+      },
+      "file": "frames/01-sun-start.png"
+    },
+    "02-sun-mid-circle": {
+      "frameIndex": 13,
+      "timeMs": 433,
+      "tip": {
+        "x": 680,
+        "y": 193,
+        "elementId": "sun",
+        "phase": "ink",
+        "tip": true
+      },
+      "file": "frames/02-sun-mid-circle.png"
+    },
+    "03-sun-rays": {
+      "frameIndex": 30,
+      "timeMs": 1000,
+      "tip": {
+        "x": 720,
+        "y": 200,
+        "elementId": "sun",
+        "phase": "ink",
+        "tip": true
+      },
+      "file": "frames/03-sun-rays.png"
+    },
+    "04-hill-start": {
+      "frameIndex": 60,
+      "timeMs": 2000,
+      "tip": {
+        "x": 380,
+        "y": 420,
+        "elementId": "hill",
+        "phase": "ink",
+        "tip": true
+      },
+      "file": "frames/04-hill-start.png"
+    },
+    "05-hill-mid": {
+      "frameIndex": 70,
+      "timeMs": 2333,
+      "tip": {
+        "x": 209,
+        "y": 197,
+        "elementId": "hill",
+        "phase": "ink",
+        "tip": true
+      },
+      "file": "frames/05-hill-mid.png"
+    },
+    "06-final": {
+      "frameIndex": 125,
+      "timeMs": 4167,
+      "tip": {
+        "x": null,
+        "y": null,
+        "elementId": "hill",
+        "phase": "hold",
+        "tip": false
+      },
+      "file": "frames/06-final.png"
+    }
+  },
+  "checks": [
+    {
+      "name": "same_timeline_with_and_without_hand",
+      "ok": true,
+      "detail": 126
+    },
+    {
+      "name": "explicit_order_overrides_start_and_file_order",
+      "ok": true,
+      "detail": {
+        "sunStart": 6,
+        "hillStart": 60
+      }
+    },
+    {
+      "name": "sun_starts_east",
+      "ok": true,
+      "detail": {
+        "x": 772,
+        "y": 160,
+        "elementId": "sun",
+        "phase": "ink",
+        "tip": true
+      }
+    },
+    {
+      "name": "clockwise_lower_arc_before_upper_arc",
+      "ok": true,
+      "detail": {
+        "x": 746,
+        "y": 205,
+        "elementId": "sun",
+        "phase": "ink",
+        "tip": true
+      }
+    },
+    {
+      "name": "hill_hidden_for_entire_sun_phase",
+      "ok": true,
+      "detail": 60
+    },
+    {
+      "name": "hill_starts_bottom_right",
+      "ok": true,
+      "detail": {
+        "x": 380,
+        "y": 420,
+        "elementId": "hill",
+        "phase": "ink",
+        "tip": true
+      }
+    },
+    {
+      "name": "all_ink_tips_touch_revealed_ink_without_hand",
+      "ok": true,
+      "detail": 66
+    },
+    {
+      "name": "hill_direction_peak_before_left_base",
+      "ok": true,
+      "detail": 30
+    },
+    {
+      "name": "sun_persists_when_hill_starts",
+      "ok": true,
+      "detail": 60
+    },
+    {
+      "name": "east_ray_progressive_near_to_far",
+      "ok": true,
+      "detail": {
+        "radii": [
+          15,
+          30,
+          70,
+          90
+        ],
+        "firstVisibleFrames": [
+          25,
+          26,
+          27,
+          28
+        ]
+      }
+    },
+    {
+      "name": "south_ray_progressive_near_to_far",
+      "ok": true,
+      "detail": {
+        "radii": [
+          15,
+          30,
+          70,
+          90
+        ],
+        "firstVisibleFrames": [
+          29,
+          30,
+          31,
+          32
+        ]
+      }
+    },
+    {
+      "name": "west_ray_progressive_near_to_far",
+      "ok": true,
+      "detail": {
+        "radii": [
+          15,
+          30,
+          70,
+          90
+        ],
+        "firstVisibleFrames": [
+          33,
+          34,
+          36,
+          37
+        ]
+      }
+    },
+    {
+      "name": "north_ray_progressive_near_to_far",
+      "ok": true,
+      "detail": {
+        "radii": [
+          15,
+          30,
+          70,
+          90
+        ],
+        "firstVisibleFrames": [
+          38,
+          38,
+          40,
+          41
+        ]
+      }
+    },
+    {
+      "name": "ray_order_east_south_west_north",
+      "ok": true,
+      "detail": {
+        "east": [
+          25,
+          26,
+          27,
+          28
+        ],
+        "south": [
+          29,
+          30,
+          31,
+          32
+        ],
+        "west": [
+          33,
+          34,
+          36,
+          37
+        ],
+        "north": [
+          38,
+          38,
+          40,
+          41
+        ]
+      }
+    },
+    {
+      "name": "sun_top_has_no_new_hook_outside_source_ink",
+      "ok": true,
+      "detail": {
+        "extraDarkPixelsBeyond2pxSourceMargin": 0,
+        "sourceFeature": "flat-ended north ray crossing the circle, not an authored arrow"
+      }
+    }
+  ],
+  "allPassed": true
+}

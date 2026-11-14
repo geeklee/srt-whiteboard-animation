@@ -74,8 +74,11 @@ assets/whiteboard/<项目名>/
 - **每幕总时长** `sceneDurationMs` 来自该幕字幕时间跨度（`parse_srt.py` 的 `scenes[].sceneDurationMs`）。
 - **区域串行作画：** stream 画法是一支笔在动，同一幕内各区域应**在时间上依次进行**（`startMs` 不重叠）：下一区域从上一区域 `startMs + durationMs`（+ 可选 100–300ms 呼吸）开始。若 `startMs` 重叠，渲染器仍按顺序处理，但视觉上不再是并发。
 - **区域内 ink→color：** 每个区域的 `durationMs` 会按 `ink:color = 2:1` 切成起笔段和添彩段。`durationMs` 由预览台的**开始/结束时间**决定（结束−开始），可对齐该区域对应字幕的时长；也可用 150 像素/秒 × 绘制距离作为初始估算。
-- **凝视收尾：** 全部区域画完后自动补到 `sceneDurationMs`，并保证结尾至少停留 0.5 秒完整原图。
-- `reveal.direction` 在 stream 画法下**不决定真实笔迹**（笔迹由骨架/网格自动生成），仅供预览台的矩形代理演示；保留它是为了预览台可用。
+- **凝视收尾：** 全部区域画完后自动补到 `sceneDurationMs`，并保证结尾至少停留 0.5 秒；纯自动场景显示完整原图，含显式 `strokePaths` 的场景只保留实际绘制结果（未覆盖/受保护的墨迹不补全）。
+- **显式顺序的时间约束：** 排序后每区从 `max(startMs, 前一区实际结束)` 开始；持续时间不变、帧取整，必要时延长成片。显式路径的添彩只着色已揭墨迹，不整区扫开。重叠像素归后绘制区域。
+- `reveal.direction` 在 stream 画法下**不决定真实笔迹**（未指定 `strokePaths` 时，笔迹由骨架/网格自动生成），仅供预览台的矩形代理演示；保留它是为了预览台可用。
+- **区域按序 vs 逐笔路径：** 可选字段 `elementOrder`（元素 id 数组）或 `orderBy: "sequence"` 只改变区域揭示顺序，不会变成真实笔顺。元素上的 `strokePaths` 才是成片落墨与笔尖共用的定向折线（点序即方向，多条折线之间抬笔）。`handPath` 仍然只用于预览代理，不等于成片路径。
+- `strokePaths` 缺省或 `null` 时保持旧的 grid/skeleton 自动路径；键存在（含空数组）则为显式模式，空路径不回退自动路径，避免把「没画」误当成自动笔顺。
 
 ## 遮罩不变量（编排层，必须执行）
 
@@ -108,7 +111,7 @@ assets/whiteboard/<项目名>/
 }
 ```
 
-> `direction` / `handPath` 仅供预览台矩形代理使用；成片笔迹由 stream 自动生成，无需精调。
+> `direction` / `handPath` 仅供预览台矩形代理使用，不等于成片路径。未写 `strokePaths` 时成片笔迹仍由 stream 自动生成。若要指定真实笔顺，在对应元素上添加 `strokePaths`，并用可选的 `elementOrder` 指定区域顺序。样片见 `examples/explicit-order-demo/`。
 
 ## 使用脚本
 

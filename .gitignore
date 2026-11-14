@@ -7,7 +7,12 @@ venv/
 # 本地产物（成片体积大，不入库；banana 示例视频保留）
 *.mp4
 !examples/scene-01-monkey-mountain-banana-whiteboard.mp4
+!examples/explicit-order-demo/scene-explicit-order-whiteboard.mp4
 
 # OS
 Thumbs.db
 .DS_Store
+
+# 可复现样片的本地核验产物（保留脚本及 proof.json 摘要）
+examples/explicit-order-demo/tip-log.json
+examples/explicit-order-demo/frames/
