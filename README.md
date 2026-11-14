@@ -96,7 +96,22 @@ assets/whiteboard/<项目名>/
 }
 ```
 
-`direction` 和 `handPath` 用于预览台的矩形代理；最终成片的真实笔迹由流式绘制器自动生成。对于相互遮挡的对象，在较早元素的 `protectedRegions` 中标出需要延后显示的区域，避免后续内容提前露出。
+`direction` 和 `handPath` 用于预览台的矩形代理；**不要把它当成成片笔顺**。未指定下面两个可选字段时，最终成片仍由流式绘制器按 `--ink-path grid|skeleton` 自动生成路径。
+
+可选的显式顺序字段（向后兼容，旧标注不用改）：
+
+- 场景级 `elementOrder`：元素 `id` 数组，决定**区域揭示顺序**（先画哪一块，以及后续区域从掩码中扣除的顺序）。没有它时默认仍按 `reveal.startMs`；也可设 `orderBy` 为 `"sequence"` 改按已有 `sequence` 字段排序。
+- 元素级 `strokePaths`：画布坐标下的定向折线数组，例如 `[[[x,y],[x,y],...], ...]`。点的先后就是笔顺和方向，折线之间抬笔。成片的落墨与笔尖共用这条时间线。
+- 二者不是一回事：只改 `elementOrder` 只会换「先揭示哪一块」，区内仍是自动网格/骨架；要真实笔顺必须写 `strokePaths`。
+- `strokePaths` 键缺失或为 `null`：该区走旧自动路径。键存在（包括 `[]`）：显式模式，空路径或非法点不会静默回退自动路径。
+- 排序后串行作画：每区实际开始 = `max(startMs, 前一区实际结束)`；`startMs` 是最早开始约束，不会因改顺序而自动清零。持续时间保留，必要时成片会长于 `sceneDurationMs`（并至少留 500ms 凝视）；帧取整会有小幅偏差。
+- 显式路径只揭示轨迹半径内的原图墨迹（不是凭空绘制新线）。添彩只着色已揭开的墨迹，不做整区 contour-wipe；显式/自动混合场景结尾保留实际绘制结果，不补整张原图。未被路径覆盖或受保护的墨迹保持隐藏；旧纯自动场景仍保留完整原图收尾。
+- 重叠部分归后绘制区域，早画的路径经过那里也不会揭墨（笔尖仍沿作者路径移动）；请按此约束规划分镜/路径。
+- 网页预览仍是矩形布局代理（并非 `strokePaths` 逐像素预览，末帧也不是验收依据）；成片 + 无手遮挡验证帧才可证明揭墨与笔尖同步。
+- 标注数字字段校验更严格：画布尺寸须为正的有限 JSON 数字；区域坐标、尺寸及时间须为有限 JSON 数字（不接受数字字符串、布尔值、NaN/Infinity），尺寸/时间不得为负，保护区域须为矩形数组。非法标注 CLI 返回 1，不开始渲染。
+- 最小样片见 [`examples/explicit-order-demo/`](examples/explicit-order-demo/)。
+
+对于相互遮挡的对象，在较早元素的 `protectedRegions` 中标出需要延后显示的区域，避免后续内容提前露出。
 
 ## 常用命令
 
@@ -119,6 +134,19 @@ python scripts/render_annotation_preview.py <图片路径> <标注路径> <预�
 ```bash
 <ENV_PY> scripts/render_stream_whiteboard.py <图片路径> <标注路径> <输出.mp4> assets/drawing-hand.png \
   --ink-path grid --color-fill contour-wipe
+```
+
+核验笔尖与揭墨是否同步（可选）：
+
+```bash
+<ENV_PY> scripts/render_stream_whiteboard.py <图片路径> <标注路径> <输出.mp4> assets/drawing-hand.png \
+  --tip-log tip-log.json
+```
+
+运行测试：
+
+```bash
+<ENV_PY> -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 合并多幕：
@@ -149,6 +177,10 @@ srt-whiteboard-animation/
 │   ├── parse_srt.py                  # 字幕解析与分镜建议
 │   ├── render_annotation_preview.py  # 标注检查图
 │   ├── render_stream_whiteboard.py   # 流式笔迹 MP4 渲染器
+│   ├── draw_order.py                 # 显式区域顺序与笔画路径
+│   ├── test_draw_order.py            # 排序/路径/边界单元测试
+│   ├── test_render_order.py          # 旧模式与显式顺序渲染测试
+│   ├── test_preview_order.py         # 预览纯函数顺序/时序测试（可选 Node）
 │   ├── merge_scenes.py               # 多幕合并
 │   └── prepare_env.py                # 依赖环境准备
 └── agents/openai.yaml                # Codex 元数据
