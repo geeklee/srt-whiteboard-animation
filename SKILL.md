@@ -1,104 +1,108 @@
 ---
 name: srt-whiteboard-animation
-description: 将 SRT 字幕做成暖米黄纸张底的白板手绘动画：读字幕→输出配图策略→确认后生成统一风格线稿→按叙事语义标注分区→预览台调整→渲染 MP4。编排沿用分区遮罩揭示（annotation.json / sequence / startMs / protectedRegions），但每个区域内的落墨换成 stream 的连续笔迹（骨架/网格 ink→color）。当用户提供 SRT 字幕并要求"字幕做成白板手绘/流式笔迹视频""SRT 生成白板动画""按字幕分镜画手绘"时触发。
+description: Turn an SRT subtitle file into a whiteboard hand-drawn animation on warm beige paper: read subtitles, plan illustrations, generate line art, annotate narrative regions, tune in a preview editor, render MP4 (region mask reveals + continuous stream strokes). Use when the user provides an SRT and wants a whiteboard or hand-drawn explainer video.
 ---
 
-# SRT 白板动画（mask 编排 + stream 画法）
+# SRT Whiteboard Animation (mask choreography + stream drawing)
 
-把 SRT 字幕转成白板手绘动画：**编排**沿用分区遮罩揭示（按叙事顺序逐区域揭示、未开始区域完全隐藏、重叠用 `protectedRegions` 保护）；**画法**换成流式笔迹——每个区域在自己的允许掩码内，笔尖沿骨架/网格连续滑行落墨（起笔 ink → 添彩 color），所有区域共享一张持久画布，已画完的区域保留在画布上。所有面向用户的说明、分镜、配置和界面文字必须使用中文。
+English translation of the original Mandarin SKILL.md from https://github.com/geeklee/srt-whiteboard-animation (MIT).
 
-与逐格跳变或矩形擦除不同：本 skill 的笔迹是**连贯流动**的；与整图 stream 不同：本 skill 按**字幕叙事分区**依次作画，可控制每个元素的出场顺序与时序。
+Converts an SRT into a whiteboard hand-drawn animation. **Choreography** uses region mask reveals: regions appear one by one in narrative order, regions that have not started are fully hidden, and overlaps are guarded with `protectedRegions`. **Drawing** uses a continuous stream pen: inside its allowed mask, each region is inked by a pen tip gliding along a skeleton or grid (first `ink`, then `color`). All regions share one persistent canvas, so finished regions stay drawn. All user-facing explanations, storyboards, config text and replies use the user's language (English by default).
 
-## 默认实现参数
+Unlike frame-by-frame jumps or rectangular wipes, the strokes flow continuously. Unlike whole-image stream drawing, this skill draws by subtitle narrative region, so you control the order and timing of every element.
 
-| 项目 | 默认要求 |
+Note: the preview editor UI (`assets/preview.html`) is still in Chinese in this version.
+
+## Default implementation parameters
+
+| Item | Default requirement |
 |---|---|
-| 纸张背景 | 生成图使用暖米黄旧纸色（建议 `#F5EBD7`）；渲染时从原图距四角内缩取样染底，禁止纯白。 |
-| 画法 | 每区域 stream 连续笔迹：起笔 `ink`（铺线稿）→ 添彩 `color`（还原原色）；权重 `ink:color = 2:1`。 |
-| 笔迹路径 | `--ink-path grid`（网格，默认，稳）或 `skeleton`（骨架追踪，线稿清晰的插画更贴合）。 |
-| 上色风格 | `--color-fill contour-wipe`（轮廓扫描，默认）或 `brush`（沿轨迹刷）。 |
-| 未绘制区域 | 区域的允许掩码 = 矩形 `region` 扣除「后续区域 + protectedRegions」；未开始区域完全隐藏。 |
-| 时长来源 | 每张图的 `sceneDurationMs` 来自该幕字幕的时间跨度（建议 25–35 秒/幕）。 |
-| 编辑框 | 预览台默认显示全部编号编辑框；编辑框不属于动画画面内容。 |
+| Paper background | Generated images use warm beige old-paper color (suggested `#F5EBD7`). At render time the paper tone is sampled inset from the four corners of the source image. Pure white is forbidden. |
+| Drawing method | Per-region stream strokes: start with `ink` (lay down line art), then `color` (restore original colors). Weight `ink:color = 2:1`. |
+| Stroke path | `--ink-path grid` (grid, default, stable) or `skeleton` (skeleton tracing, fits clean line-art illustrations better). |
+| Coloring style | `--color-fill contour-wipe` (contour sweep, default) or `brush` (brush along the trajectory). |
+| Undrawn regions | A region's allowed mask = its rectangle `region` minus all later regions and its `protectedRegions`. Regions not yet started are fully hidden. |
+| Duration source | Each image's `sceneDurationMs` comes from the time span of that scene's subtitles (suggested 25-35 seconds per scene). |
+| Edit boxes | The preview editor shows all numbered edit boxes by default. Edit boxes are not part of the animation picture. |
 
-## 统一出图视觉规范（强制）
+## Unified image style (mandatory)
 
-所有场景的源图必须遵循同一套视觉语言；生成前把以下要求完整写入出图提示词，生成后逐条检查：
+Every scene's source image must follow one visual language. Write all of the following into the image-generation prompt in full before generating, and check each point afterwards:
 
-- **风格与构图：** 极简手绘插图、纯素描草图风格、类似 Notion 的克制涂鸦美学。以概念表达为主，不追求写实；构图简洁、背景干净、大量留白，整体情感平和、清晰，系列内线条/人物/配色一致。
-- **颜色与材质：** 米色纸张背景 `#F5EBD7`、深灰色草图线条；仅可用红色、橙色、蓝色 作少量概念性点缀。不得使用其他强调色、高饱和度配色或复杂纹理。
-- **人物与对象：** 对象以简洁轮廓、少量线条和留白表达，强调关系/变化/核心概念，而非真实比例、材质与细节。
-- **绝对禁止：** 场景源图中的任何文字、词语、字母、数字、字体或标签；写实感、摄影细节、3D 效果、绘画质感；复杂场景、密集背景、繁复装饰和高饱和度画面。
-- **绘制手部例外：** 若用户明确说明笔杆上的文字是其标识并要求保留，可保留 `drawing-hand.png` 笔杆上的标识；它不属于场景源图文字，也不需要清除或重绘。未获得用户明确说明时，仍按无文字画面处理。
+- **Style and composition:** Minimal hand-drawn illustration, pure pencil-sketch look, a restrained Notion-like doodle aesthetic. Express concepts rather than realism. Simple composition, clean background, plenty of white space, calm and clear overall mood, consistent lines, characters and palette across the series.
+- **Color and material:** Beige paper background `#F5EBD7`, dark gray sketch lines. Only red, orange and blue may be used, sparingly, as conceptual accents. No other accent colors, no highly saturated palettes, no complex textures.
+- **People and objects:** Objects use simple outlines, few lines and white space, emphasizing relationships, change and the core concept instead of true proportions, materials and detail.
+- **Absolutely forbidden:** Any text, words, letters, numbers, fonts or labels inside scene source images; photorealism, photographic detail, 3D effects, painterly texture; complex scenes, dense backgrounds, elaborate decoration and highly saturated imagery.
+- **Drawing-hand exception:** If the user explicitly says the text on the pen barrel is their logo and asks to keep it, the logo on `drawing-hand.png` may stay. It is not scene source-image text and does not need to be removed or redrawn. Without that explicit statement, treat it as a text-free picture.
 
-## 确认关卡（强制）
+## Confirmation gates (mandatory)
 
-默认工作流的**每一步完成后都必须停止并等待用户明确确认**，才可开始下一步。确认前不得生成下一步的图片、标注、预览、视频或合并文件；不得把“未回复”“此前的笼统授权”“用户没有反对”视为确认。用户要求修改上一步时，只重做该步，并在完成后再次等待确认。
+**After every step of the default workflow, stop and wait for the user's explicit confirmation** before starting the next step. Do not generate the next step's images, annotations, previews, videos or merged files before confirmation. Do not treat "no reply", an earlier blanket authorization, or "the user did not object" as confirmation. When the user asks for changes to the previous step, redo only that step and wait for confirmation again.
 
-唯一的连带动作是：**标注 JSON 创建完成后，必须立即自动打开预览台并载入该 JSON 所在目录**；这属于第 3 步的交付，不需要为“打开预览台”另行等待确认。若浏览器的 File System Access API 要求用户手势，使用浏览器界面选择这个已确定的目录；不得因此向用户索要额外确认或改为让用户自行打开预览台。
+The only chained action: **once the annotation JSON is created, immediately open the preview editor and load the directory containing that JSON automatically.** This is part of delivering step 3 and needs no separate confirmation. If the browser's File System Access API requires a user gesture, use the browser UI to select that already-determined directory. Do not ask the user for extra confirmation because of this, and do not hand the job back to the user to open the editor themselves.
 
-## 工作流程
+## Workflow
 
-1. **读字幕、出策略（不生成图片）。** 用 `scripts/parse_srt.py` 把 SRT 解析成字幕条并按 25–35 秒/幕给出建议分镜。据此输出配图策略：每幕的场景编号、核心表达、画面主体、对应字幕区间与 `sceneDurationMs`。每幕只表达一个核心意思。**完成后停止，等待用户确认策略。**
-2. **生成线稿。** 仅在用户确认策略后，按“统一出图视觉规范”逐幕生成 16:9 暖米黄旧纸张底线稿图，背景 `#F5EBD7`，主体之间保留充足留白便于自动拆分；不得生成文字、复杂照片、重叠对象或与规范冲突的元素。**完成后停止，展示线稿并等待用户确认。**
-3. **先读字幕再看图，然后标注并打开预览台。** 仅在用户确认线稿后，先阅读该图对应的字幕、再实际查看图片、并获取原图像素宽高；不得只凭字幕臆测画面，也不得只按画面位置机械排序。先提炼字幕叙事事件，再把图中可见主体对应到事件，按“场景铺垫 → 关键人物/物体 → 动作冲突或变化 → 反应/结果”的语义顺序安排绘制。随后创建 `<图片名>.annotation.json`。创建完成后，立即用默认浏览器打开 `assets/preview.html`，并通过预览台的“打开文件夹”载入**该标注文件所在目录**的全部 `<名称>.png` + `<名称>.annotation.json`；不得只给出文件路径或要求用户自行操作。**预览台已带入目录后停止，等待用户确认标注与预览内容。**
-4. **生成区域预览图。** 仅在用户确认标注与预览内容后，用 `render_annotation_preview.py` 出编号/方向检查图，核对分区与叙事顺序一致、区域都在画布内、重叠主体用 `protectedRegions` 保护。**完成后停止，等待用户确认预览图。**
-5. **在预览台调整并保存。** 仅在用户确认预览图后，在已打开且已载入对应目录的预览台调整：默认（未播放）显示完整图片和区域框；画布是**矩形代理**：拖区域四边四角改 `region`，右侧改名称/方向/**开始(ms)/结束(ms)**（时长= 结束−开始，只读）与**字幕**，拖动模块列表**调整顺序**（自动重排 `sequence`），选中模块自动高亮对应字幕；拖时间轴或按播放看揭示（未开始区域不显示）；`direction` 只影响此代理。改完点“保存本场景/全部保存”写回原 `.annotation.json`（含每区域 `subtitle`，并把 `sceneDurationMs` 对齐到最后区域结束+0.5s）。**保存后停止，等待用户确认最终标注与时序。**
-6. **命令行渲染成片。** 仅在用户确认最终标注与时序后，用 `render_stream_whiteboard.py` 逐幕出全清 MP4，抽查开场、任意重叠模块中段、结尾三个时间点。**完成后停止，等待用户确认成片。**
-7. **多幕合并（仅适用于多幕）。** 仅在用户确认所有单幕成片后，用 `merge_scenes.py` 按顺序合并成一条。**完成后停止，等待用户确认最终合成视频。**
+1. **Read the subtitles and produce a strategy (no images yet).** Use `scripts/parse_srt.py` to parse the SRT into cues and suggest a storyboard at 25-35 seconds per scene. From it, output the illustration strategy: per scene, the scene number, core idea, main subject of the picture, the matching subtitle range and `sceneDurationMs`. Each scene expresses exactly one core idea. **Stop when done and wait for the user to confirm the strategy.**
+2. **Generate line art.** Only after the strategy is confirmed, generate a 16:9 warm beige old-paper line-art image per scene following the unified image style, background `#F5EBD7`, with ample white space between subjects to make automatic splitting easy. Do not generate text, complex photos, overlapping objects or anything that conflicts with the style. **Stop when done, show the line art and wait for confirmation.**
+3. **Read the subtitles, then look at the image, then annotate and open the preview editor.** Only after the user confirms the line art: first read that image's subtitles, then actually view the image and get its pixel width and height. Do not guess the picture from subtitles alone, and do not sort mechanically by on-screen position. Extract the narrative events from the subtitles, map the visible subjects in the image to those events, and order the drawing semantically: scene setup -> key character/object -> action, conflict or change -> reaction/result. Then create `<image name>.annotation.json`. Once created, immediately open `assets/preview.html` in the default browser and load, via the editor's "open folder" button, **the directory containing that annotation file**, with all its `<name>.png` + `<name>.annotation.json` pairs. Do not merely give the file path or ask the user to do it. **Stop once the editor has the directory loaded and wait for the user to confirm the annotations and preview content.**
+4. **Generate region preview images.** Only after the user confirms the annotations and preview content, use `render_annotation_preview.py` to produce a numbered, direction-annotated check image. Verify that the regions match the narrative order, all regions lie inside the canvas, and overlapping subjects are guarded with `protectedRegions`. **Stop when done and wait for the user to confirm the preview image.**
+5. **Adjust and save in the preview editor.** Only after the user confirms the preview image, adjust in the already open editor with the directory loaded. By default (not playing) it shows the full image and region boxes. The canvas is a **rectangle proxy**: drag the region's edges and corners to change `region`; on the right, edit the name, direction, **start (ms) / end (ms)** (duration = end - start, read-only) and **subtitle**; drag items in the module list to **reorder** (`sequence` renumbers automatically); selecting a module highlights its subtitle. Drag the timeline or press play to watch the reveal (regions not yet started are hidden). `direction` only affects this proxy. When done, click "save this scene / save all" to write back to the original `.annotation.json` (including each region's `subtitle`, and aligning `sceneDurationMs` to the last region's end + 0.5 s). **Stop after saving and wait for the user to confirm the final annotations and timing.**
+6. **Render the final video from the command line.** Only after the user confirms the final annotations and timing, use `render_stream_whiteboard.py` to render each scene to a full-clear MP4, and spot check three moments: the opening, mid-point of any overlapping module, and the end. **Stop when done and wait for the user to confirm the video.**
+7. **Merge scenes (multi-scene projects only).** Only after the user confirms all single-scene videos, use `merge_scenes.py` to merge them in order into one. **Stop when done and wait for the user to confirm the final merged video.**
 
-## 目录约定
+## Directory convention
 
-在用户项目中创建：
+Create in the user's project:
 
 ```text
-assets/whiteboard/<项目名>/
-  scene-01-<名称>.png
-  scene-01-<名称>.annotation.json     # 与 png 同名
-  scene-01-<名称>-whiteboard.mp4      # 成片
-  scene-01-<名称>-preview.mp4         # 真实片段（预览台生成，低清）
+assets/whiteboard/<project>/
+  scene-01-<name>.png
+  scene-01-<name>.annotation.json     # same name as the png
+  scene-01-<name>-whiteboard.mp4      # final render
+  scene-01-<name>-preview.mp4         # real clip (made by the editor, low-res)
 ```
 
-图片与配置必须同名：`foo.png` 对应 `foo.annotation.json`。预览台据此自动加载配置。
+Image and config must share a name: `foo.png` pairs with `foo.annotation.json`. The editor loads configs automatically on that basis.
 
-## 语义排序与像素级标注（必须执行）
+## Semantic ordering and pixel-level annotation (must do)
 
-1. **阅读依据：** 标注前必须同时具备字幕与已查看的原图。缺任一项先索取，不得生成标注。
-2. **顺序依据：** `sequence`、`startMs` 与 `label` 必须反映字幕中的事件先后，而非仅按从左到右、从上到下或视觉显眼程度。
-3. **坐标依据：** 每个模块输出原图坐标系的整数像素 `x`、`y`、`width`、`height`；原点左上角，禁止百分比/比例/估算坐标或省略尺寸。`canvas.width`/`canvas.height` 必须等于原图像素尺寸。
-4. **模块字段：** 每个元素含 `sequence`、`narrativeRole`、`subtitle`、`region`、`reveal`、`handPath`。`narrativeRole` 用中文说明其在字幕中的叙事作用；`subtitle` 存该区域对应的字幕文本（来自 SRT，供预览台联动与后续用途）；`sequence` 从 1 起连续。
-5. **校验：** 生成预览前检查每个区域是否在画布内、是否覆盖对应可见主体、是否与字幕事件相符；重叠主体用 `protectedRegions` 保护后绘制模块。
+1. **Reading basis:** Before annotating you must have both the subtitles and the image you actually viewed. If either is missing, ask for it first; do not generate annotations.
+2. **Ordering basis:** `sequence`, `startMs` and `label` must reflect the order of events in the subtitles, not merely left-to-right, top-to-bottom, or visual prominence.
+3. **Coordinate basis:** Every module outputs integer pixel `x`, `y`, `width`, `height` in the source image's coordinate system, origin at the top-left. Percentages, ratios, estimated coordinates and omitted sizes are forbidden. `canvas.width` / `canvas.height` must equal the source image's pixel size.
+4. **Module fields:** Every element has `sequence`, `narrativeRole`, `subtitle`, `region`, `reveal`, `handPath`. `narrativeRole` states its narrative function in the subtitles; `subtitle` stores the subtitle text for that region (from the SRT, used for editor linkage and later purposes); `sequence` starts at 1 and is consecutive.
+5. **Validation:** Before generating the preview, check that each region lies inside the canvas, covers its corresponding visible subject and matches the subtitle event. Guard overlapping subjects with `protectedRegions` so the later module is drawn afterwards.
 
-## 时序模型（stream 画法专用）
+## Timing model (stream drawing only)
 
-- **每幕总时长** `sceneDurationMs` 来自该幕字幕时间跨度（`parse_srt.py` 的 `scenes[].sceneDurationMs`）。
-- **区域串行作画：** stream 画法是一支笔在动，同一幕内各区域应**在时间上依次进行**（`startMs` 不重叠）：下一区域从上一区域 `startMs + durationMs`（+ 可选 100–300ms 呼吸）开始。若 `startMs` 重叠，渲染器仍按顺序处理，但视觉上不再是并发。
-- **区域内 ink→color：** 每个区域的 `durationMs` 会按 `ink:color = 2:1` 切成起笔段和添彩段。`durationMs` 由预览台的**开始/结束时间**决定（结束−开始），可对齐该区域对应字幕的时长；也可用 150 像素/秒 × 绘制距离作为初始估算。
-- **凝视收尾：** 全部区域画完后自动补到 `sceneDurationMs`，并保证结尾至少停留 0.5 秒完整原图。
-- `reveal.direction` 在 stream 画法下**不决定真实笔迹**（笔迹由骨架/网格自动生成），仅供预览台的矩形代理演示；保留它是为了预览台可用。
+- **Total scene duration** `sceneDurationMs` comes from the scene's subtitle time span (`scenes[].sceneDurationMs` from `parse_srt.py`).
+- **Regions are drawn serially:** the stream method is one pen moving, so within a scene the regions should run one after another in time (non-overlapping `startMs`): the next region starts at the previous region's `startMs + durationMs` (+ an optional 100-300 ms breath). If `startMs` values overlap, the renderer still processes them in order, but visually it is no longer concurrent.
+- **ink -> color within a region:** Each region's `durationMs` is split `ink:color = 2:1` into a pen-down segment and a coloring segment. `durationMs` is set by the editor's **start/end time** (end - start) and can be aligned to the duration of the region's subtitle; as an initial estimate you can use 150 pixels/second x drawing distance.
+- **Hold at the end:** After all regions finish, the video pads out to `sceneDurationMs`, guaranteeing at least 0.5 s of the complete original image at the end.
+- Under the stream method, `reveal.direction` **does not determine the real strokes** (strokes come from the skeleton/grid automatically); it only drives the editor's rectangle proxy demo. It is kept so the editor keeps working.
 
-## 遮罩不变量（编排层，必须执行）
+## Mask invariants (choreography layer, must hold)
 
-- 在时间 `t`，模块仅可显示其 `reveal.startMs ≤ t` 之后、且不超过当前作画进度的像素；未开始模块的任何线条/填充/图像都不得出现。
-- 每个区域的**允许掩码** = 矩形 `region` 扣除全部**后续模块的 `region`**，再扣除本模块 `reveal.protectedRegions`。stream 落墨被限制在允许掩码内，因此后续区域不会提前露线。
-- `protectedRegions` 采用与 `region` 相同的原图整数像素坐标，用于矩形过大、主体交叠或背景线条可能泄露的情况。
-- 渲染器已实现"限制在允许掩码内落墨 → 后续区域与保护区天然不被触碰"的顺序；预览台矩形代理用等价的 `destination-out` 扣除演示同一编排。
+- At time `t`, a module may only show pixels after `reveal.startMs <= t` and not beyond the current drawing progress. No lines, fills or imagery from a module that has not started may appear.
+- Each region's **allowed mask** = its rectangle `region` minus the `region` of all **later modules**, minus this module's `reveal.protectedRegions`. Stream inking is confined to the allowed mask, so later regions never leak early.
+- `protectedRegions` use the same integer source-image pixel coordinates as `region`, for cases where a rectangle is too large, subjects overlap, or background lines might leak.
+- The renderer already implements the order "ink only inside the allowed mask, so later regions and protected areas are untouched by construction"; the editor's rectangle proxy demonstrates the same choreography with an equivalent `destination-out` subtraction.
 
-## 配置示例
+## Config example
 
 ```json
 {
   "sceneId": "scene-01",
   "canvas": { "width": 1672, "height": 941 },
-  "storyBasis": "该幕字幕的事件摘要",
+  "storyBasis": "Event summary of this scene's subtitles",
   "sceneDurationMs": 9000,
   "elements": [
     {
       "id": "rockery",
-      "label": "假山场景",
+      "label": "Rockery scene",
       "sequence": 1,
-      "narrativeRole": "故事的场景铺垫",
-      "subtitle": "猴子山上，一只小猴子坐在假山顶端，手里拿着香蕉。",
+      "narrativeRole": "Scene setup for the story",
+      "subtitle": "On Monkey Mountain, a little monkey sits atop the rockery holding a banana.",
       "type": "structure",
       "region": { "x": 20, "y": 120, "width": 540, "height": 780 },
       "reveal": { "direction": "top_to_bottom", "startMs": 300, "durationMs": 2600, "maskPaddingPx": 22, "protectedRegions": [] },
@@ -108,47 +112,48 @@ assets/whiteboard/<项目名>/
 }
 ```
 
-> `direction` / `handPath` 仅供预览台矩形代理使用；成片笔迹由 stream 自动生成，无需精调。
+> `direction` / `handPath` are only for the editor's rectangle proxy; the real strokes in the final video are generated automatically by stream drawing and need no fine-tuning.
 
-## 使用脚本
+## Using the scripts
 
-所有渲染脚本用 skill 内 `.venv` 的解释器运行（依赖隔离）。
+Run all render scripts with the interpreter from the skill's `.venv` (dependency isolation).
 
-1. **准备环境**（首次或缺依赖时）：
+1. **Prepare the environment** (first run or missing dependencies):
    ```bash
-   python scripts/prepare_env.py --check   # 探测；成功末行输出 ENV_PY=<路径>，捕获备用
-   python scripts/prepare_env.py           # 缺则建 .venv 并装 opencv-python/numpy/av
+   python scripts/prepare_env.py --check   # probe; on success the last line prints ENV_PY=<path>, capture it
+   python scripts/prepare_env.py           # creates .venv and installs opencv-python/numpy/av/Pillow if missing
    ```
-2. **解析字幕 + 建议分镜**：
+2. **Parse subtitles + suggest storyboard:**
    ```bash
-   python scripts/parse_srt.py <字幕.srt> --target-sec 30 --min-sec 25 --max-sec 35
+   python scripts/parse_srt.py <subtitles.srt> --target-sec 30 --min-sec 25 --max-sec 35
    ```
-3. **区域编号预览图**：
+3. **Numbered region preview image:**
    ```bash
-   python scripts/render_annotation_preview.py <图片> <标注> <预览图输出>
+   <ENV_PY> scripts/render_annotation_preview.py <image> <annotation> <preview output>
    ```
-4. **预览台（无需服务器）**：直接用 Chrome / Edge 打开 `assets/preview.html`，点"打开文件夹"选目录 → 载入全部图片+同名标注 → 拖拽编辑 → "保存"写回原文件。写回需 File System Access API（Chrome/Edge）；其它浏览器改为下载后手动覆盖。渲染仍走命令行（下面第 5 步）。
-5. **渲染单幕成片**：
+   Labels may contain CJK text, so a CJK font is needed. The script auto-detects common fonts on Windows, macOS and Linux; set the `SRT_WB_FONT` environment variable to a font file (.ttc/.ttf/.otf) if none is found.
+4. **Preview editor (no server needed):** open `assets/preview.html` directly in Chrome / Edge, click "open folder" and choose the directory -> it loads every image plus its same-name annotation -> edit by dragging -> "save" writes back to the original files. Writing back needs the File System Access API (Chrome/Edge); other browsers fall back to download-and-overwrite by hand. Rendering still happens on the command line (step 5 below).
+5. **Render a single scene:**
    ```bash
-   <ENV_PY> scripts/render_stream_whiteboard.py <图片> <标注> <输出mp4> assets/drawing-hand.png \
-       [--ink-path grid|skeleton] [--color-fill contour-wipe|brush] [--total-ms <毫秒>]
+   <ENV_PY> scripts/render_stream_whiteboard.py <image> <annotation> <output.mp4> assets/drawing-hand.png \
+       [--ink-path grid|skeleton] [--color-fill contour-wipe|brush] [--total-ms <milliseconds>]
    ```
-   `--total-ms` 缺省时用标注里的 `sceneDurationMs`。末行输出 `OUTPUT=<路径>`。
-6. **多幕合并**：
+   When `--total-ms` is omitted, the annotation's `sceneDurationMs` is used. The last line prints `OUTPUT=<path>`.
+6. **Merge scenes:**
    ```bash
-   <ENV_PY> scripts/merge_scenes.py --inputs 幕1.mp4 幕2.mp4 幕3.mp4 --output final.mp4
+   <ENV_PY> scripts/merge_scenes.py --inputs scene1.mp4 scene2.mp4 scene3.mp4 --output final.mp4
    ```
 
-## 质量检查
+## Quality checks
 
-渲染前/后确认：
+Confirm before and after rendering:
 
-- 首帧为干净的暖米黄旧纸张底，没有提前露出线条。
-- 已阅读对应字幕并实际查看原图；`canvas` 与原图像素尺寸一致，所有 `region` 为整数像素坐标且在画布内。
-- `sequence`、`startMs` 与字幕事件顺序一致；预览图编号/标签/区域来自同一份标注 JSON。
-- 在开场、任意重叠模块中段、所有模块完成后三个时间点检查：未绘制模块均不可见，重叠保护区不漏出，最终帧显示完整原图。
-- 笔尖贴近正在推进的笔迹；线稿清晰的插画可用 `--ink-path skeleton` 让笔迹更贴合。
-- 所有模块结束后停留至少 0.5 秒完整原图。
-- 多幕合并后顺序、时长与字幕分镜一致。
+- The first frame is a clean warm beige old-paper background with no lines showing early.
+- The matching subtitles were read and the source image was actually viewed; `canvas` matches the image's pixel size, and every `region` is integer pixel coordinates inside the canvas.
+- `sequence` and `startMs` match the order of subtitle events; the preview image's numbers, labels and regions come from the same annotation JSON.
+- Check three moments, the opening, mid-point of any overlapping module, and after all modules finish: undrawn modules are all invisible, protected overlap areas do not leak, and the final frame shows the complete original image.
+- The pen tip stays close to the advancing stroke; for clean line-art illustrations use `--ink-path skeleton` to make strokes fit better.
+- After all modules finish, at least 0.5 s of the full original image holds.
+- After merging, order and duration match the subtitle storyboard.
 
-如需修改效果，先在预览台（`assets/preview.html`）调整标注（区域/顺序/时序）并保存，再命令行渲染，不要凭空反复出片。
+To change the look, first adjust the annotations (regions / order / timing) in the preview editor (`assets/preview.html`) and save, then render from the command line; do not repeatedly re-render blindly.
