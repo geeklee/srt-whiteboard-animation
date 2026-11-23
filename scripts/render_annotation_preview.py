@@ -1,15 +1,36 @@
 import json
+import os
 import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+# 中文标签需要 CJK 字体。优先用环境变量 SRT_WB_FONT 指定，否则依次探测各系统常见字体。
+FONT_CANDIDATES = [
+    "C:/Windows/Fonts/msyh.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+]
+
+
+def find_font() -> str:
+    override = os.environ.get("SRT_WB_FONT")
+    for candidate in ([override] if override else []) + FONT_CANDIDATES:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise SystemExit("未找到可用的中文字体；请设置环境变量 SRT_WB_FONT 指向一个 CJK 字体文件（.ttc/.ttf/.otf）。")
 
 
 def main(image_path: str, annotation_path: str, output_path: str) -> None:
     image = Image.open(image_path).convert("RGBA")
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    font_file = "C:/Windows/Fonts/msyh.ttc"
+    font_file = find_font()
     font = ImageFont.truetype(font_file, 28)
     small_font = ImageFont.truetype(font_file, 18)
     colors = [(38, 103, 255, 225), (255, 105, 92, 225), (41, 167, 102, 225), (181, 100, 255, 225)]
