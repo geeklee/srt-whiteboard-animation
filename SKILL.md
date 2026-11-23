@@ -11,7 +11,9 @@ Converts an SRT into a whiteboard hand-drawn animation. **Choreography** uses re
 
 Unlike frame-by-frame jumps or rectangular wipes, the strokes flow continuously. Unlike whole-image stream drawing, this skill draws by subtitle narrative region, so you control the order and timing of every element.
 
-Note: the preview editor UI (`assets/preview.html`) is still in Chinese in this version.
+## Language and internationalization
+
+In the tradition of FOSS, community contributions are accepted in the contributor's language as much as possible. Internationalization of this project is a project goal, and all contributions toward that goal are welcome. At runtime, the skill's user-facing text follows the user's language. The preview editor UI (`assets/preview.html`) is still Chinese-only; translating it is a good first contribution.
 
 ## Default implementation parameters
 
